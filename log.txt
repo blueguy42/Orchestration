@@ -1,0 +1,213 @@
+================================================================================
+Multi-Agent Orchestration: Baseline Experiments
+================================================================================
+
+Generating task stream: N=1000 tasks, M=3 regions
+
+================================================================================
+Scenario: Approximately Invariant
+================================================================================
+
+Appropriateness of Orchestration: 1.045
+  (Higher values indicate greater benefit from orchestration)
+
+Agent Capabilities (P(correct | region)):
+  Agent_1: Capabilities=['0.350', '0.336', '0.314'], Costs=['5.0', '5.0', '5.0']
+  Agent_2: Capabilities=['0.339', '0.338', '0.323'], Costs=['5.0', '5.0', '5.0']
+  Agent_3: Capabilities=['0.349', '0.322', '0.329'], Costs=['5.0', '5.0', '5.0']
+  Agent_4: Capabilities=['0.331', '0.311', '0.357'], Costs=['5.0', '5.0', '5.0']
+
+Running orchestrators...
+
+RandomOrchestrator:
+  Overall Accuracy: 0.301
+  Agent Usage: {'Agent_1': 237, 'Agent_2': 255, 'Agent_3': 240, 'Agent_4': 268}
+
+GreedyOrchestrator:
+  Overall Accuracy: 0.320
+  Agent Usage: {'Agent_1': 305, 'Agent_2': 10, 'Agent_3': 352, 'Agent_4': 333}
+
+UCB1Orchestrator:
+  Overall Accuracy: 0.298
+  Agent Usage: {'Agent_1': 246, 'Agent_2': 294, 'Agent_3': 309, 'Agent_4': 151}
+
+PaperOrchestrator:
+  Overall Accuracy: 0.329
+  Agent Usage: {'Agent_1': 684, 'Agent_2': 3, 'Agent_3': 18, 'Agent_4': 295}
+
+OracleOrchestrator:
+  Overall Accuracy: 0.333
+  Agent Usage: {'Agent_1': 353, 'Agent_2': 334, 'Agent_3': 0, 'Agent_4': 313}
+
+--------------------------------------------------------------------------------
+Summary:
+  Best Orchestrator: OracleOrchestrator (Accuracy: 0.333)
+
+================================================================================
+Scenario: Dominant
+================================================================================
+
+Appropriateness of Orchestration: 2.380
+  (Higher values indicate greater benefit from orchestration)
+
+Agent Capabilities (P(correct | region)):
+  Agent_1: Capabilities=['0.650', '0.852', '0.877'], Costs=['5.0', '5.0', '5.0']
+  Agent_2: Capabilities=['0.399', '0.298', '0.303'], Costs=['5.0', '5.0', '5.0']
+  Agent_3: Capabilities=['0.079', '0.076', '0.069'], Costs=['5.0', '5.0', '5.0']
+  Agent_4: Capabilities=['0.031', '0.091', '0.274'], Costs=['5.0', '5.0', '5.0']
+
+Running orchestrators...
+
+RandomOrchestrator:
+  Overall Accuracy: 0.306
+  Agent Usage: {'Agent_1': 228, 'Agent_2': 246, 'Agent_3': 268, 'Agent_4': 258}
+
+GreedyOrchestrator:
+  Overall Accuracy: 0.572
+  Agent Usage: {'Agent_1': 685, 'Agent_2': 9, 'Agent_3': 2, 'Agent_4': 304}
+
+UCB1Orchestrator:
+  Overall Accuracy: 0.685
+  Agent Usage: {'Agent_1': 856, 'Agent_2': 71, 'Agent_3': 41, 'Agent_4': 32}
+
+PaperOrchestrator:
+  Overall Accuracy: 0.794
+  Agent Usage: {'Agent_1': 997, 'Agent_2': 1, 'Agent_3': 1, 'Agent_4': 1}
+
+OracleOrchestrator:
+  Overall Accuracy: 0.783
+  Agent Usage: {'Agent_1': 1000, 'Agent_2': 0, 'Agent_3': 0, 'Agent_4': 0}
+
+--------------------------------------------------------------------------------
+Summary:
+  Best Orchestrator: PaperOrchestrator (Accuracy: 0.794)
+
+================================================================================
+Scenario: Dominant + Misaligned Cost
+================================================================================
+
+Appropriateness of Orchestration: 2.380
+  (Higher values indicate greater benefit from orchestration)
+
+Agent Capabilities (P(correct | region)):
+  Agent_1: Capabilities=['0.650', '0.852', '0.877'], Costs=['50.9', '120.7', '110.3']
+  Agent_2: Capabilities=['0.399', '0.298', '0.303'], Costs=['51.6', '111.1', '1.4']
+  Agent_3: Capabilities=['0.079', '0.076', '0.069'], Costs=['45.0', '1.6', '123.6']
+  Agent_4: Capabilities=['0.031', '0.091', '0.274'], Costs=['2.0', '100.3', '121.9']
+
+Running orchestrators...
+
+RandomOrchestrator:
+  Overall Accuracy: 0.302
+  Agent Usage: {'Agent_1': 219, 'Agent_2': 244, 'Agent_3': 263, 'Agent_4': 274}
+
+GreedyOrchestrator:
+  Overall Accuracy: 0.785
+  Agent Usage: {'Agent_1': 994, 'Agent_2': 2, 'Agent_3': 2, 'Agent_4': 2}
+
+UCB1Orchestrator:
+  Overall Accuracy: 0.769
+  Agent Usage: {'Agent_1': 891, 'Agent_2': 46, 'Agent_3': 31, 'Agent_4': 32}
+
+PaperOrchestrator:
+  Overall Accuracy: 0.627
+  Agent Usage: {'Agent_1': 683, 'Agent_2': 314, 'Agent_3': 1, 'Agent_4': 2}
+
+OracleOrchestrator:
+  Overall Accuracy: 0.789
+  Agent Usage: {'Agent_1': 1000, 'Agent_2': 0, 'Agent_3': 0, 'Agent_4': 0}
+
+--------------------------------------------------------------------------------
+Summary:
+  Best Orchestrator: OracleOrchestrator (Accuracy: 0.789)
+
+================================================================================
+Scenario: Varying
+================================================================================
+
+Appropriateness of Orchestration: 2.380
+  (Higher values indicate greater benefit from orchestration)
+
+Agent Capabilities (P(correct | region)):
+  Agent_1: Capabilities=['0.650', '0.076', '0.274'], Costs=['5.0', '5.0', '5.0']
+  Agent_2: Capabilities=['0.399', '0.298', '0.303'], Costs=['5.0', '5.0', '5.0']
+  Agent_3: Capabilities=['0.079', '0.852', '0.069'], Costs=['5.0', '5.0', '5.0']
+  Agent_4: Capabilities=['0.031', '0.091', '0.877'], Costs=['5.0', '5.0', '5.0']
+
+Running orchestrators...
+
+RandomOrchestrator:
+  Overall Accuracy: 0.313
+  Agent Usage: {'Agent_1': 251, 'Agent_2': 241, 'Agent_3': 241, 'Agent_4': 267}
+
+GreedyOrchestrator:
+  Overall Accuracy: 0.790
+  Agent Usage: {'Agent_1': 355, 'Agent_2': 4, 'Agent_3': 331, 'Agent_4': 310}
+
+UCB1Orchestrator:
+  Overall Accuracy: 0.733
+  Agent Usage: {'Agent_1': 323, 'Agent_2': 43, 'Agent_3': 331, 'Agent_4': 303}
+
+PaperOrchestrator:
+  Overall Accuracy: 0.804
+  Agent Usage: {'Agent_1': 353, 'Agent_2': 2, 'Agent_3': 333, 'Agent_4': 312}
+
+OracleOrchestrator:
+  Overall Accuracy: 0.797
+  Agent Usage: {'Agent_1': 353, 'Agent_2': 0, 'Agent_3': 334, 'Agent_4': 313}
+
+--------------------------------------------------------------------------------
+Summary:
+  Best Orchestrator: PaperOrchestrator (Accuracy: 0.804)
+
+================================================================================
+OVERALL RESULTS COMPARISON
+================================================================================
+
+Scenario                       RandomOrchestra | GreedyOrchestra | UCB1Orchestrato | PaperOrchestrat | OracleOrchestra
+-----------------------------------------------------------------------------------------------------------------------------
+Approximately Invariant             0.301      |      0.320      |      0.298      |      0.329      |      0.333     
+Dominant                            0.306      |      0.572      |      0.685      |      0.794      |      0.783     
+Dominant + Misaligned Cost          0.302      |      0.785      |      0.769      |      0.627      |      0.789     
+Varying                             0.313      |      0.790      |      0.733      |      0.804      |      0.797     
+
+================================================================================
+Generating visualizations...
+================================================================================
+
+1. Creating performance comparison plot...
+   Saved to: output/orchestrator_comparison.png
+
+2. Creating learning curves (Varying scenario)...
+   Saved to: output/learning_curves.png
+
+================================================================================
+Experiments complete!
+================================================================================
+
+KEY FINDINGS:
+--------------------------------------------------------------------------------
+
+Approximately Invariant:
+  Appropriateness: 1.045
+  Random baseline: 0.301
+  Paper method: 0.329 (+9.3% vs random)
+  Oracle: 0.333 (gap: 1.2%)
+
+Dominant:
+  Appropriateness: 2.380
+  Random baseline: 0.306
+  Paper method: 0.794 (+159.5% vs random)
+  Oracle: 0.783 (gap: -1.4%)
+
+Dominant + Misaligned Cost:
+  Appropriateness: 2.380
+  Random baseline: 0.302
+  Paper method: 0.627 (+107.6% vs random)
+  Oracle: 0.789 (gap: 20.5%)
+
+Varying:
+  Appropriateness: 2.380
+  Random baseline: 0.313
+  Paper method: 0.804 (+156.9% vs random)
+  Oracle: 0.797 (gap: -0.9%)
