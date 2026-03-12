@@ -96,56 +96,70 @@ class RegionEstimator:
 
 
 class CapabilityEstimator:
-    """Estimates agent capabilities per region using Beta-Binomial model"""
-    
-    def __init__(self, K: int, M: int, alpha0: float = 1.0, alpha1: float = 1.0):
+    """Estimates agent capabilities per region using Beta-Binomial model.
+
+    Accepts either:
+      - A prior *object* (BetaPrior / JeffreysPrior / SkewedExpertPrior from
+        priors.py), which exposes `.alpha0` and `.alpha1` attributes; or
+      - Raw (alpha0, alpha1) floats for backwards-compatibility.
+    """
+
+    def __init__(self, K: int, M: int, alpha0: float = 1.0, alpha1: float = 1.0,
+                 prior=None):
         """
-        Initialize capability estimator.
-        
-        Args:
-            K: Number of agents
-            M: Number of regions
-            alpha0: Prior pseudo-count for incorrect
-            alpha1: Prior pseudo-count for correct
+        Parameters
+        ----------
+        K      : Number of agents
+        M      : Number of regions
+        alpha0 : Prior pseudo-count for incorrect outcomes (used when prior=None)
+        alpha1 : Prior pseudo-count for correct   outcomes (used when prior=None)
+        prior  : Optional prior object from priors.py; overrides alpha0/alpha1.
         """
         self.K = K
         self.M = M
-        self.alpha0 = alpha0
-        self.alpha1 = alpha1
-        
-        # Counts: [agent, region, outcome] where outcome is 0 (incorrect) or 1 (correct)
+
+        if prior is not None:
+            self.alpha0 = prior.alpha0
+            self.alpha1 = prior.alpha1
+            self.prior  = prior
+        else:
+            self.alpha0 = alpha0
+            self.alpha1 = alpha1
+            self.prior  = None
+
+        # Counts: [agent, region, outcome]  (0 = incorrect, 1 = correct)
         self.counts = np.zeros((K, M, 2))
-        
+
     def update(self, agent_idx: int, region: int, is_correct: bool):
-        """Update counts after agent makes a prediction"""
-        outcome = 1 if is_correct else 0
-        self.counts[agent_idx, region, outcome] += 1
-        
+        """Update counts after agent makes a prediction."""
+        self.counts[agent_idx, region, 1 if is_correct else 0] += 1
+
     def get_capability(self, agent_idx: int, region: int) -> float:
         """
-        Get estimated capability for an agent in a region.
-        
-        Returns:
-            Estimated P(Ak | Rm)
+        Posterior mean of Beta(alpha1 + n_correct, alpha0 + n_incorrect).
+
+        Uses the standard MAP/posterior-mean formula:
+            θ̂ = (alpha1 + n_correct) / (alpha0 + alpha1 + n_total)
         """
-        n_incorrect = self.counts[agent_idx, region, 0]
-        n_correct = self.counts[agent_idx, region, 1]
-        
-        numerator = n_correct + self.alpha1 - 1
-        denominator = (n_incorrect + n_correct) + (self.alpha0 + self.alpha1) - 2
-        
-        if denominator > 0:
-            return numerator / denominator
-        else:
-            return self.alpha1 / (self.alpha0 + self.alpha1)
-    
+        n_inc = self.counts[agent_idx, region, 0]
+        n_cor = self.counts[agent_idx, region, 1]
+
+        # If the prior object supports explicit posterior_mean, use it
+        if self.prior is not None and hasattr(self.prior, "posterior_mean"):
+            return self.prior.posterior_mean(int(n_cor), int(n_inc))
+
+        # Default: Beta posterior mean
+        a1 = self.alpha1 + n_cor
+        a0 = self.alpha0 + n_inc
+        return a1 / (a1 + a0)
+
     def get_all_capabilities(self) -> np.ndarray:
-        """Get estimated capabilities for all agents and regions"""
-        capabilities = np.zeros((self.K, self.M))
+        """Return estimated capabilities for all agents and regions (K × M)."""
+        caps = np.zeros((self.K, self.M))
         for k in range(self.K):
             for m in range(self.M):
-                capabilities[k, m] = self.get_capability(k, m)
-        return capabilities
+                caps[k, m] = self.get_capability(k, m)
+        return caps
 
 
 class BaseOrchestrator(ABC):

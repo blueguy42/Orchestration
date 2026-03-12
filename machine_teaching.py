@@ -118,12 +118,15 @@ class BaseTeacher:
         task_pool: TaskPool,
         alpha0: float = 1.0,
         alpha1: float = 1.0,
+        prior=None,
     ):
         self.agents = agents
         self.K = len(agents)
         self.M = M
         self.task_pool = task_pool
-        self.capability_estimator = CapabilityEstimator(self.K, self.M, alpha0, alpha1)
+        self.capability_estimator = CapabilityEstimator(
+            self.K, self.M, alpha0, alpha1, prior=prior
+        )
 
         # Ground-truth capability matrix (K × M) for computing MSE
         self.true_caps = np.array(
@@ -191,15 +194,19 @@ class BaseTeacher:
 
     def posterior_variance(self, agent_idx: int, region: int) -> float:
         """
-        Posterior variance of θ_{k,m} under Beta(α₁, α₀) updated by observations.
+        Posterior variance of θ_{k,m} under the current prior + observations.
 
-        Beta variance: (α₁ · α₀) / ((α₁+α₀)² · (α₁+α₀+1))
-        where α₁ = prior_α₁ + n_correct, α₀ = prior_α₀ + n_incorrect.
+        If the prior object defines posterior_variance(), that is called;
+        otherwise the standard Beta formula is used:
+            var = (α₁ · α₀) / ((α₁+α₀)² · (α₁+α₀+1))
         """
-        n_inc = self.capability_estimator.counts[agent_idx, region, 0]
-        n_cor = self.capability_estimator.counts[agent_idx, region, 1]
-        a1 = n_cor + self.capability_estimator.alpha1
-        a0 = n_inc + self.capability_estimator.alpha0
+        n_inc = int(self.capability_estimator.counts[agent_idx, region, 0])
+        n_cor = int(self.capability_estimator.counts[agent_idx, region, 1])
+        ce = self.capability_estimator
+        if ce.prior is not None and hasattr(ce.prior, "posterior_variance"):
+            return ce.prior.posterior_variance(n_cor, n_inc)
+        a1 = n_cor + ce.alpha1
+        a0 = n_inc + ce.alpha0
         s = a1 + a0
         return (a1 * a0) / (s * s * (s + 1))
 
@@ -428,6 +435,7 @@ def run_teaching_experiment(
     teacher_classes,
     seed: int = 42,
     tasks_per_region: int = 500,
+    prior=None,
 ) -> Dict[str, Dict]:
     """
     Run all provided teacher classes on the same agent set and compare.
@@ -437,10 +445,10 @@ def run_teaching_experiment(
     agents         : List of agents with known capabilities
     M              : Number of regions
     budget         : Total number of evaluation steps (budget)
-    teacher_classes: List of (class, kwargs) pairs, e.g.
-                     [(OmniscientTeacher, {}), (SurrogateTeacher, {})]
+    teacher_classes: List of (class, kwargs) pairs
     seed           : Random seed
     tasks_per_region: Pool size per region
+    prior          : Optional prior object from priors.py
 
     Returns
     -------
@@ -451,11 +459,15 @@ def run_teaching_experiment(
     for teacher_cls, kwargs in teacher_classes:
         np.random.seed(seed)
         pool = TaskPool(M=M, tasks_per_region=tasks_per_region, seed=seed)
-        teacher = teacher_cls(agents=agents, M=M, task_pool=pool, **kwargs)
+        kw = dict(kwargs)
+        if prior is not None:
+            kw["prior"] = prior
+        teacher = teacher_cls(agents=agents, M=M, task_pool=pool, **kw)
         teacher.run(budget)
         results[teacher_cls.__name__] = teacher.get_summary()
 
     return results
+
 
 
 def compute_teaching_efficiency(results: Dict[str, Dict], target_mse: float) -> Dict[str, Optional[int]]:

@@ -7,6 +7,10 @@ Implementation of baseline orchestration algorithms based on:
 
 This framework implements a multi-agent orchestration system for efficiently routing tasks between heterogeneous agents (humans and AI) whose capabilities vary across different task regions. The system learns agent capabilities online and makes orchestration decisions that balance performance and cost.
 
+**Two Approaches:**
+1. **Passive Orchestration**: Observe random task stream and learn which agent is best for each region
+2. **Active Machine Teaching**: Strategically select agent-region pairs to evaluate for faster learning
+
 ## Key Concepts
 
 ### Agents
@@ -27,9 +31,12 @@ This framework implements a multi-agent orchestration system for efficiently rou
 ## Implementation Structure
 
 ```
-orchestration_framework.py    # Core classes and orchestrators
-synthetic_experiments.py      # Experiment setup and evaluation
-run_experiments.py           # Main script to run all experiments
+orchestration_framework.py    # Core orchestrator classes
+machine_teaching.py          # Machine teaching approach
+priors.py                    # Prior distributions for Bayesian estimation
+synthetic_experiments.py      # Synthetic task generation and evaluation utilities
+unified_experiments.py       # Main script for comprehensive experiments
+run_experiments.py           # Baseline experiments (legacy)
 ```
 
 ## Orchestration Algorithms Implemented
@@ -178,11 +185,20 @@ Each agent excels in different regions.
    - Low (1.045): Only 9.3% improvement vs random
    - High (2.380): 100-160% improvement vs random
 
-## Usage Example
+## Usage Examples
+
+### Running Comprehensive Experiments
+
+```bash
+python unified_experiments.py
+```
+
+### Baseline Orchestration
 
 ```python
 from orchestration_framework import Agent, Task, PaperOrchestrator
 from synthetic_experiments import SyntheticDataGenerator, create_agents_varying
+from priors import BetaPrior
 
 # Create agents with varying expertise
 agents = create_agents_varying(M=3)
@@ -191,8 +207,9 @@ agents = create_agents_varying(M=3)
 data_gen = SyntheticDataGenerator(M=3, seed=42)
 tasks = data_gen.generate_task_stream(N=1000)
 
-# Initialize orchestrator
-orchestrator = PaperOrchestrator(agents, M=3)
+# Initialize orchestrator with custom prior
+prior = BetaPrior("optimistic")  # or use "uniform", "weak", "strong", etc.
+orchestrator = PaperOrchestrator(agents, M=3, prior=prior)
 
 # Run orchestration
 for t, task in enumerate(tasks):
@@ -208,6 +225,25 @@ for t, task in enumerate(tasks):
 # Get results
 stats = orchestrator.get_performance_stats()
 print(f"Overall Accuracy: {stats['overall_accuracy']:.3f}")
+```
+
+### Machine Teaching
+
+```python
+from machine_teaching import SurrogateTeacher
+from orchestration_framework import PaperOrchestrator
+from synthetic_experiments import create_agents_varying
+
+agents = create_agents_varying(M=3)
+
+# Initialize teacher (actively selects agent-region pairs)
+teacher = SurrogateTeacher(agents, M=3, prior="weak", budget=100)
+
+# Run teaching: returns orchestrator trained on strategically selected tasks
+trained_orchestrator = teacher.run_teaching()
+
+# Access learning curves
+print(f"Final MSE: {teacher.mse_curve[-1]:.4f}")
 ```
 
 ## Mathematical Framework
@@ -238,17 +274,36 @@ MAP estimate: c_t,km = (n<t,1 + α_1 - 1) / (n<t,0 + n<t,1 + α_0 + α_1 - 2)
 ## File Descriptions
 
 ### `orchestration_framework.py`
-Core implementation:
+Core orchestration implementation:
 - `Task`: Data structure for tasks
 - `Agent`: Agent with capabilities and costs
-- `RegionEstimator`: Bayesian region probability estimation
-- `CapabilityEstimator`: Bayesian capability estimation
+- `Prior`: Base class for prior distributions
+- `RegionEstimator`: Bayesian region probability estimation (supports custom priors)
+- `CapabilityEstimator`: Bayesian capability estimation (supports custom priors)
 - `BaseOrchestrator`: Abstract base class
 - `PaperOrchestrator`: Bhatt et al. implementation
 - `UCB1Orchestrator`: Upper Confidence Bound
 - `GreedyOrchestrator`: Myopic selection
 - `RandomOrchestrator`: Random baseline
 - `OracleOrchestrator`: Perfect knowledge upper bound
+
+### `priors.py`
+Prior distributions for Bayesian estimation:
+- **8 Prior Types**: `uniform`, `weak`, `strong`, `optimistic`, `pessimistic`, `very_strong`, `informative_optimistic`, `informative_pessimistic`
+- `Prior`: Base class with `prior_mean` and `prior_variance` properties
+- `BetaPrior`: Beta distribution priors for agent capabilities
+- `DirichletPrior`: Dirichlet distribution priors for region probabilities
+- Utilities for prior comparison and analysis
+
+### `machine_teaching.py`
+Machine teaching orchestrators:
+- `BaseTeacher`: Abstract teacher base class
+- `OmniscientTeacher`: Knows true capabilities (upper bound)
+- `ImitationTeacher`: Maintains internal capability estimate
+- `SurrogateTeacher`: Uncertainty-based sampling (max query entropy)
+- `RoundRobinTeacher`: Deterministic region cycling
+- `RandomTeacher`: Uniform random sampling (lower bound)
+- Teaching experiment infrastructure
 
 ### `synthetic_experiments.py`
 Experiment utilities:
@@ -260,34 +315,86 @@ Experiment utilities:
 - `plot_results`: Visualize comparisons
 - `plot_learning_curves`: Visualize learning over time
 
+### `unified_experiments.py`
+Main comprehensive experiment script:
+- Runs baseline orchestrators and machine teaching in parallel
+- Compares both approaches in unified visualizations
+- Supports multiple prior distributions
+- Generates 4+ visualization files:
+  1. Baseline accuracy comparison
+  2. Teaching MSE convergence curves
+  3. Combined comparisons per scenario
+  4. Prior distribution effects analysis
+- Prints comprehensive summary tables
+
 ### `run_experiments.py`
-Main script:
-- Runs all scenarios
-- Compares all orchestrators
+Legacy baseline experiments:
+- Runs all baseline scenarios
+- Compares orchestrators
 - Generates visualizations
-- Prints comprehensive results
+- Prints results (use `unified_experiments.py` for comprehensive analysis)
 
 ## Outputs Generated
 
-1. **orchestrator_comparison.png**
-   - Bar chart comparing all orchestrators across scenarios
-   - Shows relative performance clearly
+### Unified Experiments (`unified_experiments.py`)
 
-2. **learning_curves.png**
-   - Time series showing accuracy convergence
-   - Moving average with window=50
-   - Demonstrates learning speed differences
+Generates comprehensive visualizations:
 
-## Extensions for Machine Teaching
+1. **1_baseline_accuracy.png** - Bar chart comparing all baseline orchestrators across scenarios
+2. **2_teaching_mse.png** - Learning curves showing MSE convergence for teaching approaches
+3. **3_combined_[scenario].png** - Combined baseline and teaching comparisons per scenario
+4. **4_prior_comparison.png** - Analysis of prior distribution effects on learning
 
-This baseline implementation provides the foundation for the proposed machine teaching approach:
+Console output includes:
+- Summary tables comparing all approaches per scenario
+- Appropriateness metrics and performance statistics
+- Final accuracy and teaching efficiency metrics
 
-1. **Strategic Task Selection**: Instead of random stream, teacher selects informative tasks
-2. **Efficient Capability Learning**: Minimize evaluations needed for accurate estimation
-3. **Region-Aware Sampling**: Target uncertain regions for faster convergence
-4. **Active Learning**: Query most informative agent-region pairs
+### Legacy Baseline Experiments (`run_experiments.py`)
 
-The machine teaching extension would modify task generation to strategically probe agent capabilities rather than observing a passive stream.
+1. **orchestrator_comparison.png** - Bar chart comparing baseline orchestrators
+2. **learning_curves.png** - Convergence curves with moving averages
+
+## Machine Teaching Framework
+
+An active learning approach for efficient capability estimation. Instead of passively observing a task stream, the teacher strategically selects which agent-region pairs to evaluate.
+
+### Teaching Approaches
+
+**Available Teachers:**
+1. **OmniscientTeacher** - Knows true capabilities (upper bound)
+2. **ImitationTeacher** - Maintains internal capability estimate and learns from orchestration feedback
+3. **SurrogateTeacher** - Selects tasks that maximize uncertainty (highest query entropy)
+4. **RoundRobinTeacher** - Deterministic cycling through agent-region pairs
+5. **RandomTeacher** - Uniform random selection (lower bound)
+
+### Key Features
+
+- **Prior Support**: All teachers support custom prior distributions (Beta priors for capabilities, Dirichlet for regions)
+- **Efficiency Metric**: Measures MSE convergence of capability estimates over teaching budget
+- **Comparison Mode**: Unified experiments compare baseline orchestrators with machine teaching approaches
+- **Flexible Sampling**: Different strategies to probe agent capabilities for faster learning
+
+## Running Experiments
+
+### Comprehensive Experiments (Recommended)
+```bash
+python unified_experiments.py
+```
+
+Runs:
+- All 4 expertise scenarios (Approximately Invariant, Dominant, Dominant+Misaligned, Varying)
+- 5 baseline orchestrators (Random, Greedy, UCB1, Paper, Oracle)
+- 5 machine teaching approaches (Random, RoundRobin, Surrogate, Imitation, Omniscient)
+- Multiple prior distributions for sensitivity analysis
+- Generates comparison visualizations
+
+### Baseline Experiments Only (Legacy)
+```bash
+python run_experiments.py
+```
+
+Generates baseline orchestrator comparisons without machine teaching.
 
 ## Requirements
 
