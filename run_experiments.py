@@ -156,11 +156,8 @@ def _save(fig, path):
 def run_baseline_experiments() -> dict:
     """Run all baseline orchestrators on all scenarios."""
     print("\n" + "=" * 70)
-    print("PART 1 — Baseline Orchestrators")
+    print("PART 1 — Baseline Orchestrators (100 runs averaged)")
     print("=" * 70)
-
-    data_gen = SyntheticDataGenerator(M=M, seed=SEED)
-    tasks = data_gen.generate_task_stream(N_TASKS)
 
     all_results = {}
     for scenario_name, agent_factory in SCENARIOS.items():
@@ -168,9 +165,35 @@ def run_baseline_experiments() -> dict:
         app = compute_appropriateness(agents, M)
         print(f"\n{'─'*60}")
         print(f"Scenario: {scenario_name}  (appropriateness={app:.3f})")
-        results = run_all_baselines(agents, tasks, verbose=True)
-        results["__app__"] = app
-        all_results[scenario_name] = results
+        
+        avg_results = {}
+        for run_idx in range(100):
+            if run_idx > 0 and run_idx % 20 == 0:
+                print(f"Run count: {run_idx}")
+                
+            data_gen = SyntheticDataGenerator(M=M, seed=SEED + run_idx)
+            tasks = data_gen.generate_task_stream(N_TASKS)
+            
+            results = run_all_baselines(agents, tasks, verbose=False)
+            
+            if not avg_results:
+                for k in results:
+                    avg_results[k] = {"overall_accuracy": 0.0}
+            for k, v in results.items():
+                avg_results[k]["overall_accuracy"] += v["overall_accuracy"]
+                
+        for k in avg_results:
+            avg_results[k]["overall_accuracy"] /= 100
+        
+        avg_results["__app__"] = app
+        all_results[scenario_name] = avg_results
+
+    # Console output for averaged
+    for scenario_name, res in all_results.items():
+        print(f"\nAveraged Results for {scenario_name}:")
+        for orch_name, stats in res.items():
+            if orch_name != "__app__":
+                print(f"  {orch_name}: {stats['overall_accuracy']:.3f} accuracy")
 
     return all_results
 
@@ -238,18 +261,33 @@ def plot_baseline_learning_curves(all_results: dict, output_path: str = None,
 
     for ax, scenario_name in zip(axes, scenarios):
         agents = SCENARIOS[scenario_name](M)
+        print(f"  Learning curves: {scenario_name}")
         for cls, kwargs, key in orch_defs:
-            task_copy = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
-            orch = cls(agents, M, **kwargs)
-            accs = []
-            for t, task in enumerate(task_copy):
-                aidx = orch.select_agent(task, t)
-                pred = agents[aidx].predict(task)
-                orch.update(aidx, task, pred)
-                if t >= window:
-                    accs.append(np.mean(orch.correctness[-window:]))
+            avg_accs = None
+            for run_idx in range(100):
+                if run_idx > 0 and run_idx % 20 == 0:
+                    print(f"Run count: {run_idx}")
+                    
+                data_gen = SyntheticDataGenerator(M=M, seed=SEED + run_idx)
+                tasks = data_gen.generate_task_stream(N_TASKS)
+                task_copy = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
+                orch = cls(agents, M, **kwargs)
+                accs = []
+                for t, task in enumerate(task_copy):
+                    aidx = orch.select_agent(task, t)
+                    pred = agents[aidx].predict(task)
+                    orch.update(aidx, task, pred)
+                    if t >= window:
+                        accs.append(np.mean(orch.correctness[-window:]))
+                
+                if avg_accs is None:
+                    avg_accs = np.array(accs)
+                else:
+                    avg_accs += np.array(accs)
+            
+            avg_accs = avg_accs / 100
             ax.plot(
-                range(window, len(task_copy)), accs,
+                range(window, len(task_copy)), avg_accs,
                 color=BASELINE_COLORS[key],
                 label=BASELINE_LABELS[key],
                 linewidth=2,
@@ -274,7 +312,7 @@ def plot_baseline_learning_curves(all_results: dict, output_path: str = None,
 def run_teaching_experiments() -> dict:
     """Run all teacher variants on all scenarios."""
     print("\n" + "=" * 70)
-    print("PART 2 — Machine Teaching")
+    print("PART 2 — Machine Teaching (100 runs averaged)")
     print(f"Budget: {BUDGET}  |  M={M}  |  Target MSE < {TARGET_MSE}")
     print("=" * 70)
 
@@ -285,12 +323,37 @@ def run_teaching_experiments() -> dict:
         print(f"\n{'─'*60}")
         print(f"Scenario: {scenario_name}  (appropriateness={app:.3f})")
 
-        results = run_teaching_experiment(
-            agents=agents, M=M, budget=BUDGET,
-            teacher_classes=TEACHER_CLASSES, seed=SEED,
-        )
-        all_results[scenario_name] = results
-        print_teaching_results(results, target_mse=TARGET_MSE)
+        avg_results = {}
+        for run_idx in range(100):
+            if run_idx > 0 and run_idx % 20 == 0:
+                print(f"Run count: {run_idx}")
+                
+            results = run_teaching_experiment(
+                agents=agents, M=M, budget=BUDGET,
+                teacher_classes=TEACHER_CLASSES, seed=SEED + run_idx,
+            )
+            
+            if not avg_results:
+                for name, summary in results.items():
+                    avg_results[name] = {
+                        "mse_curve": np.array(summary["mse_curve"]),
+                        "final_mse": summary["final_mse"],
+                        "final_estimates": summary["final_estimates"].copy(),
+                        "true_caps": summary["true_caps"],
+                    }
+            else:
+                for name, summary in results.items():
+                    avg_results[name]["mse_curve"] += np.array(summary["mse_curve"])
+                    avg_results[name]["final_mse"] += summary["final_mse"]
+                    avg_results[name]["final_estimates"] += summary["final_estimates"]
+                    
+        for name in avg_results:
+            avg_results[name]["mse_curve"] = (avg_results[name]["mse_curve"] / 100).tolist()
+            avg_results[name]["final_mse"] /= 100
+            avg_results[name]["final_estimates"] /= 100
+            
+        all_results[scenario_name] = avg_results
+        print_teaching_results(avg_results, target_mse=TARGET_MSE)
 
     return all_results
 
@@ -532,60 +595,67 @@ def evaluate_downstream_orchestration(teaching_results: dict, n_tasks: int = 500
     Compares ALL baselines + all teachers in one figure.
     """
     print("\n" + "=" * 70)
-    print("PART 3 — Downstream Orchestration Accuracy (Varying scenario)")
+    print("PART 3 — Downstream Orchestration Accuracy (Varying scenario, 100 runs averaged)")
     print("=" * 70)
 
     agents = create_agents_varying(M)
-    np.random.seed(SEED)
-    gen = SyntheticDataGenerator(M=M, seed=SEED + 1)
-    tasks = gen.generate_task_stream(n_tasks)
-
     scenario = "Varying"
     results   = teaching_results[scenario]
     teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
 
-    downstream_teach = {}
-    for tname in teacher_names:
-        estimated = results[tname]["final_estimates"]
-        est_agents = [
-            Agent(name=agents[k].name,
-                  capabilities=estimated[k],
-                  costs=agents[k].costs)
-            for k in range(len(agents))
-        ]
-        orch = PaperOrchestrator(est_agents, M)
-        for t, task in enumerate(tasks):
-            aidx = orch.select_agent(task, t)
-            pred = agents[aidx].predict(task)
-            orch.update(aidx, task, pred)
-        downstream_teach[tname] = orch.get_performance_stats()["overall_accuracy"]
-
-    # Baselines on same task stream
-    baseline_accs = {}
-    for cls, kwargs, key in [
+    downstream_teach_avg = {tname: 0.0 for tname in teacher_names}
+    
+    baseline_defs = [
         (RandomOrchestrator,  {}, "RandomOrchestrator"),
         (GreedyOrchestrator,  {}, "GreedyOrchestrator"),
         (UCB1Orchestrator,    {"c": 1.0}, "UCB1Orchestrator"),
         (PaperOrchestrator,   {}, "PaperOrchestrator"),
         (OracleOrchestrator,  {}, "OracleOrchestrator"),
-    ]:
-        task_copy = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
-        orch = cls(agents, M, **kwargs)
-        for t, task in enumerate(task_copy):
-            aidx = orch.select_agent(task, t)
-            pred = agents[aidx].predict(task)
-            orch.update(aidx, task, pred)
-        baseline_accs[key] = orch.get_performance_stats()["overall_accuracy"]
+    ]
+    baseline_accs_avg = {key: 0.0 for _, _, key in baseline_defs}
 
-    # Oracle from true capabilities
+    for run_idx in range(100):
+        if run_idx > 0 and run_idx % 20 == 0:
+            print(f"Run count: {run_idx}")
+            
+        gen = SyntheticDataGenerator(M=M, seed=SEED + run_idx + 1000)
+        tasks = gen.generate_task_stream(n_tasks)
+
+        for tname in teacher_names:
+            estimated = results[tname]["final_estimates"]
+            est_agents = [
+                Agent(name=agents[k].name,
+                      capabilities=estimated[k],
+                      costs=agents[k].costs)
+                for k in range(len(agents))
+            ]
+            orch = PaperOrchestrator(est_agents, M)
+            for t, task in enumerate(tasks):
+                aidx = orch.select_agent(task, t)
+                pred = agents[aidx].predict(task)
+                orch.update(aidx, task, pred)
+            downstream_teach_avg[tname] += orch.get_performance_stats()["overall_accuracy"]
+
+        for cls, kwargs, key in baseline_defs:
+            task_copy = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
+            orch = cls(agents, M, **kwargs)
+            for t, task in enumerate(task_copy):
+                aidx = orch.select_agent(task, t)
+                pred = agents[aidx].predict(task)
+                orch.update(aidx, task, pred)
+            baseline_accs_avg[key] += orch.get_performance_stats()["overall_accuracy"]
+
+    for tname in teacher_names: downstream_teach_avg[tname] /= 100
+    for key in baseline_accs_avg: baseline_accs_avg[key] /= 100
+
     print(f"\n{'Method':<32} {'Accuracy':>10}")
     print("-" * 45)
-    for k, v in baseline_accs.items():
+    for k, v in baseline_accs_avg.items():
         print(f"  [Baseline] {BASELINE_LABELS[k]:<22} {v:.3f}")
-    for k, v in downstream_teach.items():
+    for k, v in downstream_teach_avg.items():
         print(f"  [Teaching] {TEACHER_LABELS[k]:<22} {v:.3f}")
 
-    return baseline_accs, downstream_teach
+    return baseline_accs_avg, downstream_teach_avg
 
 
 def plot_unified_accuracy(baseline_accs: dict, downstream_teach: dict,
@@ -664,7 +734,7 @@ def run_prior_experiments(scenario_name: str = "Varying") -> dict:
     teacher types and return MSE curves + final MSEs.
     """
     print("\n" + "=" * 70)
-    print(f"PART 4 — Prior Sensitivity Analysis  (scenario: {scenario_name})")
+    print(f"PART 4 — Prior Sensitivity Analysis  (scenario: {scenario_name}, 100 runs averaged)")
     print("=" * 70)
 
     agents = SCENARIOS[scenario_name](M)
@@ -672,13 +742,38 @@ def run_prior_experiments(scenario_name: str = "Varying") -> dict:
 
     for prior in ALL_PRIORS:
         print(f"\n  Prior: {prior.name}")
-        results = run_teaching_experiment(
-            agents=agents, M=M, budget=BUDGET,
-            teacher_classes=TEACHER_CLASSES, seed=SEED,
-            prior=prior,
-        )
-        prior_results[prior.name] = results
-        print_teaching_results(results, target_mse=TARGET_MSE)
+        avg_results = {}
+        for run_idx in range(100):
+            if run_idx > 0 and run_idx % 20 == 0:
+                print(f"Run count: {run_idx}")
+                
+            results = run_teaching_experiment(
+                agents=agents, M=M, budget=BUDGET,
+                teacher_classes=TEACHER_CLASSES, seed=SEED + run_idx,
+                prior=prior,
+            )
+            
+            if not avg_results:
+                for name, summary in results.items():
+                    avg_results[name] = {
+                        "mse_curve": np.array(summary["mse_curve"]),
+                        "final_mse": summary["final_mse"],
+                        "final_estimates": summary["final_estimates"].copy(),
+                        "true_caps": summary["true_caps"],
+                    }
+            else:
+                for name, summary in results.items():
+                    avg_results[name]["mse_curve"] += np.array(summary["mse_curve"])
+                    avg_results[name]["final_mse"] += summary["final_mse"]
+                    avg_results[name]["final_estimates"] += summary["final_estimates"]
+                    
+        for name in avg_results:
+            avg_results[name]["mse_curve"] = (avg_results[name]["mse_curve"] / 100).tolist()
+            avg_results[name]["final_mse"] /= 100
+            avg_results[name]["final_estimates"] /= 100
+            
+        prior_results[prior.name] = avg_results
+        print_teaching_results(avg_results, target_mse=TARGET_MSE)
 
     return prior_results
 
