@@ -31,12 +31,11 @@ This framework implements a multi-agent orchestration system for efficiently rou
 ## Implementation Structure
 
 ```
-orchestration_framework.py    # Core orchestrator classes
-machine_teaching.py          # Machine teaching approach
+orchestration_framework.py    # Core orchestrator classes (Agent, Task, Orchestrators)
+machine_teaching.py          # Machine teaching approach (Teachers and task pool)
 priors.py                    # Prior distributions for Bayesian estimation
 synthetic_experiments.py      # Synthetic task generation and evaluation utilities
-unified_experiments.py       # Main script for comprehensive experiments
-run_experiments.py           # Baseline experiments (legacy)
+run_experiments.py           # Main script for comprehensive experiments
 ```
 
 ## Orchestration Algorithms Implemented
@@ -192,7 +191,7 @@ Each agent excels in different regions.
 ### Running Comprehensive Experiments
 
 ```bash
-python unified_experiments.py
+python run_experiments.py
 ```
 
 ### Baseline Orchestration
@@ -317,45 +316,32 @@ Experiment utilities:
 - `plot_results`: Visualize comparisons
 - `plot_learning_curves`: Visualize learning over time
 
-### `unified_experiments.py`
-Main comprehensive experiment script:
-- Runs baseline orchestrators and machine teaching in parallel
-- Compares both approaches in unified visualizations
-- Supports multiple prior distributions
-- Generates 4+ visualization files:
-  1. Baseline accuracy comparison
-  2. Teaching MSE convergence curves
-  3. Combined comparisons per scenario
-  4. Prior distribution effects analysis
-- Prints comprehensive summary tables
-
 ### `run_experiments.py`
-Legacy baseline experiments:
-- Runs all baseline scenarios
-- Compares orchestrators
-- Generates visualizations
-- Prints results (use `unified_experiments.py` for comprehensive analysis)
+Main comprehensive experiment script:
+- Runs baseline orchestrators (Random, Greedy, UCB1, Paper, Oracle)
+- Runs machine teaching approaches (Random, RoundRobin, Surrogate, Imitation, Omniscient)
+- Compares approaches across 4 expertise scenarios
+- Supports multiple prior distributions for sensitivity analysis
+- **100 independent runs** for robust statistical analysis
+- Generates visualization files comparing methods
+- Prints comprehensive summary tables
 
 ## Outputs Generated
 
-### Unified Experiments (`unified_experiments.py`)
+### Experiment Results (`run_experiments.py`)
 
-Generates comprehensive visualizations:
+Generates comprehensive visualizations and analysis:
 
-1. **1_baseline_accuracy.png** - Bar chart comparing all baseline orchestrators across scenarios
-2. **2_teaching_mse.png** - Learning curves showing MSE convergence for teaching approaches
-3. **3_combined_[scenario].png** - Combined baseline and teaching comparisons per scenario
-4. **4_prior_comparison.png** - Analysis of prior distribution effects on learning
+1. **Baseline Orchestrator Comparisons** - Bar charts across all expertise scenarios
+2. **Learning Curves** - Convergence over time with moving averages
+3. **Machine Teaching Analysis** - MSE convergence for different teaching strategies
+4. **Prior Distribution Effects** - Sensitivity analysis across prior types
 
 Console output includes:
-- Summary tables comparing all approaches per scenario
-- Appropriateness metrics and performance statistics
-- Final accuracy and teaching efficiency metrics
-
-### Legacy Baseline Experiments (`run_experiments.py`)
-
-1. **orchestrator_comparison.png** - Bar chart comparing baseline orchestrators
-2. **learning_curves.png** - Convergence curves with moving averages
+- Performance tables for each scenario and method
+- Appropriateness metrics and statistics
+- Teaching efficiency measurements
+- Prior-specific analysis
 
 ## Machine Teaching Framework
 
@@ -379,27 +365,20 @@ An active learning approach for efficient capability estimation. Instead of pass
 
 ## Running Experiments
 
-### Comprehensive Experiments (Recommended)
-```bash
-python unified_experiments.py
-```
-
-Runs:
-- All 4 expertise scenarios (Approximately Invariant, Dominant, Dominant+Misaligned, Varying)
-- 5 baseline orchestrators (Random, Greedy, UCB1, Paper, Oracle)
-- 5 machine teaching approaches (Random, RoundRobin, Surrogate, Imitation, Omniscient)
-- Multiple prior distributions for sensitivity analysis
-- **100 independent runs per configuration** for robust averaging
-- Generates comparison visualizations
-
-### Baseline Experiments Only (Legacy)
+### Main Experiment Runner
 ```bash
 python run_experiments.py
 ```
 
-Generates baseline orchestrator comparisons without machine teaching.
-- Runs **100 independent trials** for each orchestrator and scenario
-- Averages results for statistical robustness
+Runs comprehensive analysis:
+- **4 expertise scenarios**: Approximately Invariant, Dominant, Dominant+Misaligned Cost, Varying
+- **5 baseline orchestrators**: Random, Greedy, UCB1, Paper, Oracle  
+- **5 machine teaching approaches**: Random, RoundRobin, Surrogate, Imitation, Omniscient
+- **Multiple prior distributions**: Uniform, Weak, Strong, Optimistic, Pessimistic, and others
+- **100 independent runs** per configuration for robust statistical analysis
+- Generates visualizations in `output/` directory
+
+All results are stored in the `output/` folder for easy access and further analysis.
 
 ## Requirements
 
