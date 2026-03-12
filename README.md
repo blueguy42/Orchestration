@@ -158,6 +158,8 @@ Each agent excels in different regions.
 
 ## Experimental Results
 
+**Note:** All results are averaged over **100 independent runs** with different random seeds for robust statistical analysis.
+
 ### Performance Summary
 
 | Scenario | App | Random | Greedy | UCB1 | Paper | Oracle |
@@ -387,6 +389,7 @@ Runs:
 - 5 baseline orchestrators (Random, Greedy, UCB1, Paper, Oracle)
 - 5 machine teaching approaches (Random, RoundRobin, Surrogate, Imitation, Omniscient)
 - Multiple prior distributions for sensitivity analysis
+- **100 independent runs per configuration** for robust averaging
 - Generates comparison visualizations
 
 ### Baseline Experiments Only (Legacy)
@@ -395,6 +398,8 @@ python run_experiments.py
 ```
 
 Generates baseline orchestrator comparisons without machine teaching.
+- Runs **100 independent trials** for each orchestrator and scenario
+- Averages results for statistical robustness
 
 ## Requirements
 
