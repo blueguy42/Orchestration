@@ -1,6 +1,24 @@
 """
-Synthetic Experiments for Multi-Agent Orchestration
-Implements the three expertise scenarios from the paper.
+Synthetic experiment utilities for multi-agent orchestration.
+
+Provides agent configurations and task generation for the four expertise
+scenarios described in Bhatt et al. (2025), plus helpers for running
+baseline orchestrators and computing the appropriateness metric.
+
+Agent Scenarios
+---------------
+Approximately Invariant — all agents have similar P(A_k | R_m) across regions;
+                          orchestration provides minimal benefit (App ≈ 1).
+Dominant                — one agent strictly outperforms all others in every
+                          region; orchestration benefits from identifying it.
+Dominant + Mis. Cost    — dominant expertise but costs are misaligned, so the
+                          best agent is the most expensive; cost-aware methods
+                          may select a cheaper, slightly weaker agent.
+Varying                 — each agent excels in a different subset of regions;
+                          orchestration must learn which agent to route to which
+                          region (the most challenging and rewarding case).
+
+Capability matrices match Appendix B of Bhatt et al. (2025).
 """
 
 import numpy as np

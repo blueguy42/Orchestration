@@ -1,26 +1,23 @@
 """
-priors.py
-=========
 Prior distributions for the Beta-Binomial CapabilityEstimator.
 
-Three prior families are provided:
+Each prior encodes initial beliefs about agent correctness probabilities θ_{k,m}
+before any observations are collected.  They are used by CapabilityEstimator
+(orchestration_framework.py) and all teacher classes (machine_teaching.py) to
+compute MAP estimates and posterior means via Beta-Binomial conjugacy.
 
-1. BetaPrior (Dirichlet / conjugate) — the default used everywhere else.
-   Parameterised by (alpha0, alpha1); uniform Beta(1,1) is the standard
-   non-informative choice.
-
-2. JeffreysPrior — the objective, invariant prior Beta(0.5, 0.5).
-   It is the unique prior that is invariant under re-parameterisation and
-   is equivalent to Jeffreys' rule for a Bernoulli likelihood.
-
-3. SkewedExpertPrior — an *informative* prior that encodes the belief that
-   agents tend to be good (successes more likely); Beta(a, b) with a > b.
+Three prior families:
+1. BetaPrior         — conjugate Beta(α₁, α₀); default Beta(1,1) = uniform
+2. JeffreysPrior     — non-informative Beta(0.5, 0.5); invariant under
+                       re-parameterisation, less biased at the boundaries
+3. SkewedExpertPrior — informative Beta(3, 1); encodes the belief that
+                       agents are generally competent (prior mean = 0.75)
 
 All priors expose:
-    - alpha0   : pseudo-count for 'incorrect'
-    - alpha1   : pseudo-count for 'correct'
-    - name     : human-readable label
-    - prior_mean() : E[θ] under the prior
+    - alpha0, alpha1, name
+    - prior_mean(), posterior_mean(n_correct, n_incorrect)
+    - posterior_variance(n_correct, n_incorrect)
+    - map_estimate(n_correct, n_incorrect)
 """
 
 from dataclasses import dataclass
@@ -31,14 +28,9 @@ import numpy as np
 @dataclass
 class BetaPrior:
     """
-    Conjugate Beta prior (Dirichlet in the region-marginal sense).
-
-    Parameters
-    ----------
-    alpha0 : float
-        Pseudo-count for 'incorrect' outcomes.  1.0 → uniform prior.
-    alpha1 : float
-        Pseudo-count for 'correct' outcomes.   1.0 → uniform prior.
+    Conjugate Beta prior.
+    alpha0 = pseudo-count for 'incorrect'; alpha1 = pseudo-count for 'correct'.
+    Default: Beta(1,1) = uniform.
     """
     alpha0: float = 1.0
     alpha1: float = 1.0
@@ -53,11 +45,23 @@ class BetaPrior:
         return (a * b) / (s * s * (s + 1))
 
     def posterior_params(self, n_correct: int, n_incorrect: int) -> Tuple[float, float]:
-        """Return (alpha1_post, alpha0_post) after observing data."""
         return self.alpha1 + n_correct, self.alpha0 + n_incorrect
 
     def posterior_mean(self, n_correct: int, n_incorrect: int) -> float:
         a1, a0 = self.posterior_params(n_correct, n_incorrect)
+        return a1 / (a1 + a0)
+
+    def map_estimate(self, n_correct: int, n_incorrect: int) -> float:
+        """
+        MAP estimate (mode of Beta posterior).
+        Mode = (α₁ + n_cor − 1) / (α₀ + α₁ + n_total − 2)
+        Falls back to posterior mean when denominator ≤ 0.
+        """
+        a1, a0 = self.posterior_params(n_correct, n_incorrect)
+        denom = a1 + a0 - 2
+        if denom > 0:
+            return float(np.clip((a1 - 1) / denom, 0.0, 1.0))
+        # Fallback to posterior mean
         return a1 / (a1 + a0)
 
     def posterior_variance(self, n_correct: int, n_incorrect: int) -> float:
@@ -70,11 +74,8 @@ class BetaPrior:
 class JeffreysPrior:
     """
     Jeffreys prior: Beta(0.5, 0.5).
-
-    This is the unique prior that is invariant under bijective
-    re-parameterisations of the Bernoulli/Binomial model.  It is more
-    diffuse at both extremes than the uniform prior and tends to produce
-    less biased posterior estimates when data are scarce.
+    Invariant under re-parameterisation.  More diffuse at both extremes
+    than the uniform prior; tends to produce less biased estimates.
     """
     alpha0: float = 0.5
     alpha1: float = 0.5
@@ -94,6 +95,14 @@ class JeffreysPrior:
         a1, a0 = self.posterior_params(n_correct, n_incorrect)
         return a1 / (a1 + a0)
 
+    def map_estimate(self, n_correct: int, n_incorrect: int) -> float:
+        """MAP with Jeffreys: denominator can be ≤ 0 with few obs; use posterior mean."""
+        a1, a0 = self.posterior_params(n_correct, n_incorrect)
+        denom = a1 + a0 - 2
+        if denom > 0:
+            return float(np.clip((a1 - 1) / denom, 0.0, 1.0))
+        return a1 / (a1 + a0)
+
     def posterior_variance(self, n_correct: int, n_incorrect: int) -> float:
         a1, a0 = self.posterior_params(n_correct, n_incorrect)
         s = a1 + a0
@@ -104,14 +113,7 @@ class JeffreysPrior:
 class SkewedExpertPrior:
     """
     Informative 'expert-optimistic' prior: Beta(3, 1).
-
-    Encodes the belief that deployed agents are generally competent
-    (P(correct) biased toward 1).  Prior mean = 0.75.
-
-    This is analogous to inserting 3 virtual 'correct' observations and
-    1 virtual 'incorrect' observation before seeing any real data.
-    Using a stronger prior (larger alpha0+alpha1) slows adaptation but
-    regularises estimation when data are very scarce.
+    Prior mean = 0.75.  Encodes the belief that agents are generally competent.
     """
     alpha0: float = 1.0
     alpha1: float = 3.0
@@ -130,6 +132,13 @@ class SkewedExpertPrior:
 
     def posterior_mean(self, n_correct: int, n_incorrect: int) -> float:
         a1, a0 = self.posterior_params(n_correct, n_incorrect)
+        return a1 / (a1 + a0)
+
+    def map_estimate(self, n_correct: int, n_incorrect: int) -> float:
+        a1, a0 = self.posterior_params(n_correct, n_incorrect)
+        denom = a1 + a0 - 2
+        if denom > 0:
+            return float(np.clip((a1 - 1) / denom, 0.0, 1.0))
         return a1 / (a1 + a0)
 
     def posterior_variance(self, n_correct: int, n_incorrect: int) -> float:

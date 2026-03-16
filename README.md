@@ -199,28 +199,21 @@ python run_experiments.py
 ```python
 from orchestration_framework import Agent, Task, PaperOrchestrator
 from synthetic_experiments import SyntheticDataGenerator, create_agents_varying
-from priors import BetaPrior
 
 # Create agents with varying expertise
 agents = create_agents_varying(M=3)
 
-# Generate task stream  
+# Generate task stream
 data_gen = SyntheticDataGenerator(M=3, seed=42)
 tasks = data_gen.generate_task_stream(N=1000)
 
-# Initialize orchestrator with custom prior
-prior = BetaPrior("optimistic")  # or use "uniform", "weak", "strong", etc.
-orchestrator = PaperOrchestrator(agents, M=3, prior=prior)
+# Initialize orchestrator (uses uniform Beta(1,1) prior by default)
+orchestrator = PaperOrchestrator(agents, M=3)
 
 # Run orchestration
 for t, task in enumerate(tasks):
-    # Select agent
     agent_idx = orchestrator.select_agent(task, t)
-    
-    # Get prediction
     prediction = agents[agent_idx].predict(task)
-    
-    # Update with feedback
     orchestrator.update(agent_idx, task, prediction)
 
 # Get results
@@ -231,20 +224,31 @@ print(f"Overall Accuracy: {stats['overall_accuracy']:.3f}")
 ### Machine Teaching
 
 ```python
-from machine_teaching import SurrogateTeacher
-from orchestration_framework import PaperOrchestrator
+from machine_teaching import TaskPool, SurrogateTeacher, run_teaching_experiment
 from synthetic_experiments import create_agents_varying
 
 agents = create_agents_varying(M=3)
+M = 3
 
-# Initialize teacher (actively selects agent-region pairs)
-teacher = SurrogateTeacher(agents, M=3, prior="weak", budget=200)
+# Run a single teacher
+pool = TaskPool(M=M, tasks_per_region=500, seed=42)
+teacher = SurrogateTeacher(agents=agents, M=M, task_pool=pool)
+teacher.run(budget=200)
 
-# Run teaching: returns orchestrator trained on strategically selected tasks
-trained_orchestrator = teacher.run_teaching()
+summary = teacher.get_summary()
+print(f"Final MSE: {summary['final_mse']:.4f}")
 
-# Access learning curves
-print(f"Final MSE: {teacher.mse_curve[-1]:.4f}")
+# Or run all teachers at once for comparison
+from machine_teaching import OmniscientTeacher, ImitationTeacher, RandomTeacher, RoundRobinTeacher
+
+teacher_classes = [
+    (OmniscientTeacher, {}),
+    (ImitationTeacher,  {"eta_v": 5.0}),
+    (SurrogateTeacher,  {}),
+    (RoundRobinTeacher, {}),
+    (RandomTeacher,     {}),
+]
+results = run_teaching_experiment(agents, M=M, budget=200, teacher_classes=teacher_classes)
 ```
 
 ## Mathematical Framework
@@ -276,15 +280,14 @@ MAP estimate: c_t,km = (n<t,1 + α_1 - 1) / (n<t,0 + n<t,1 + α_0 + α_1 - 2)
 
 ### `orchestration_framework.py`
 Core orchestration implementation:
-- `Task`: Data structure for tasks
-- `Agent`: Agent with capabilities and costs
-- `Prior`: Base class for prior distributions
-- `RegionEstimator`: Bayesian region probability estimation (supports custom priors)
-- `CapabilityEstimator`: Bayesian capability estimation (supports custom priors)
+- `Task`: Data structure for tasks (input, label, region)
+- `Agent`: Agent with region-specific capabilities and costs
+- `RegionEstimator`: Dirichlet-Multinomial Bayesian estimation of region probabilities
+- `CapabilityEstimator`: Beta-Binomial Bayesian estimation of agent capabilities per region; supports custom prior objects from `priors.py`
 - `BaseOrchestrator`: Abstract base class
-- `PaperOrchestrator`: Bhatt et al. implementation
-- `UCB1Orchestrator`: Upper Confidence Bound
-- `GreedyOrchestrator`: Myopic selection
+- `PaperOrchestrator`: Bhatt et al. empirical utility implementation
+- `UCB1Orchestrator`: Upper Confidence Bound (per-region bandit)
+- `GreedyOrchestrator`: Myopic selection by current-region capability
 - `RandomOrchestrator`: Random baseline
 - `OracleOrchestrator`: Perfect knowledge upper bound
 
@@ -316,11 +319,12 @@ Experiment utilities:
 - `plot_learning_curves`: Visualize learning over time
 
 ### `run_experiments.py`
-Main comprehensive experiment script with 4 parts:
+Main comprehensive experiment script with 5 parts:
 - **Part 1** — Baseline orchestrators (Random, Greedy, UCB1, Paper, Oracle) across all scenarios
 - **Part 2** — Machine teaching approaches (Random, RoundRobin, Surrogate, Imitation, Omniscient): MSE convergence and efficiency
-- **Part 3** — Unified comparison: downstream orchestration accuracy and convergence curves for all baselines and teaching-guided methods
+- **Part 3** — Unified comparison: downstream orchestration accuracy and convergence curves for all baselines and teaching-guided methods on a shared absolute x-axis
 - **Part 4** — Prior sensitivity analysis (Uniform, Jeffreys, Expert) on the Varying scenario
+- **Part 5** — Budget vs downstream accuracy trade-off sweep (budget 10–300) for the Varying scenario
 - **100 independent runs** per configuration for robust statistical analysis
 - Generates all visualizations to `output/` and prints summary tables
 
@@ -331,27 +335,29 @@ Main comprehensive experiment script with 4 parts:
 All figures are saved to `output/`:
 
 **Part 1 — Baselines**
-- `baseline_accuracy.png` — grouped bar chart of overall accuracy per scenario
-- `baseline_learning_curves.png` — rolling accuracy over the task stream (4 panels)
-- `baseline_capability_mse.png` — capability estimation MSE over the task stream (4 panels)
+- `1a_baseline_accuracy.png` — grouped bar chart of overall accuracy per scenario
+- `1b_baseline_learning_curves.png` — rolling accuracy over the task stream (4 panels)
+- `1c_baseline_capability_mse.png` — capability estimation MSE over the task stream (4 panels)
 
 **Part 2 — Machine Teaching**
-- `teaching_mse_curves.png` — MSE convergence per teacher × scenario (4 panels)
-- `teaching_efficiency.png` — steps to target MSE bar chart
-- `teaching_mse_heatmap.png` — final MSE heatmap (scenarios × teachers)
-- `capability_estimates_varying.png` — true vs estimated capability scatter (Varying scenario)
-- `teaching_convergence_speed.png` — steps to 2×, 1×, ½× target MSE (Varying)
-- `teaching_mse_auc.png` — area under MSE curve (lower = faster convergence)
+- `2a_teaching_mse_curves.png` — MSE convergence per teacher × scenario (4 panels)
+- `2b_teaching_efficiency.png` — steps to target MSE bar chart
+- `2c_teaching_mse_heatmap.png` — final MSE heatmap (scenarios × teachers)
+- `2d_capability_estimates_varying.png` — true vs estimated capability scatter (Varying scenario)
+- `2e_teaching_convergence_speed.png` — steps to 2×, 1×, ½× target MSE (Varying)
+- `2f_teaching_mse_auc.png` — area under MSE curve (lower = faster convergence)
 
 **Part 3 — Unified Comparison**
-- `unified_accuracy_comparison.png` — baselines vs teaching-guided accuracy (Varying scenario)
-- `convergence_rolling_accuracy.png` — rolling accuracy for all methods, normalized x-axis (4 panels)
-- `convergence_mse.png` — capability MSE for all methods, normalized x-axis (4 panels)
+- `3a_unified_accuracy_comparison.png` — baselines vs teaching-guided downstream accuracy (Varying scenario)
+- `3b_convergence_mse_absolute.png` — capability MSE for baselines and teachers on a shared absolute evaluation-step axis (4 panels)
 
 **Part 4 — Prior Sensitivity (Varying scenario)**
-- `prior_mse_curves.png` — MSE curves per prior type
-- `prior_efficiency_bars.png` — steps to target MSE per teacher × prior
-- `prior_final_mse_heatmap.png` — final MSE heatmap (teachers × priors)
+- `4a_prior_mse_curves.png` — MSE curves per prior type
+- `4b_prior_efficiency_bars.png` — steps to target MSE per teacher × prior
+- `4c_prior_final_mse_heatmap.png` — final MSE heatmap (teachers × priors)
+
+**Part 5 — Budget vs Downstream Accuracy (Varying scenario)**
+- `5a_budget_vs_downstream_accuracy.png` — downstream accuracy as a function of teaching budget for each teacher (±1σ), with Oracle and Random reference lines
 
 Console output includes performance tables, appropriateness metrics, teaching efficiency, and prior-specific analysis.
 
