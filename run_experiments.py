@@ -238,11 +238,86 @@ def plot_baseline_accuracy(all_results: dict, output_path: str = None):
     return fig
 
 
+def compute_baseline_curves(window: int = 50) -> dict:
+    """
+    Compute baseline rolling-accuracy *and* capability-MSE curves for all
+    scenarios, averaged over 100 independent runs.
+
+    Returns
+    -------
+    dict: {scenario_name: {orch_key: {"acc_curve": list, "mse_curve": list}}}
+        acc_curve : rolling accuracy values starting from task index `window`
+                    (length = N_TASKS - window)
+        mse_curve : capability MSE at every task step 0 … N_TASKS-1
+                    (OracleOrchestrator is always 0.0)
+    """
+    orch_defs = [
+        (RandomOrchestrator,  {}, "RandomOrchestrator"),
+        (GreedyOrchestrator,  {}, "GreedyOrchestrator"),
+        (UCB1Orchestrator,    {"c": 1.0}, "UCB1Orchestrator"),
+        (PaperOrchestrator,   {}, "PaperOrchestrator"),
+        (OracleOrchestrator,  {}, "OracleOrchestrator"),
+    ]
+
+    all_curves = {}
+    for scenario_name in SCENARIOS:
+        agents = SCENARIOS[scenario_name](M)
+        K_local = len(agents)
+        true_caps = np.array(
+            [[agents[k].get_capability(m) for m in range(M)]
+             for k in range(K_local)]
+        )
+        print(f"  Computing baseline curves: {scenario_name}")
+
+        scenario_curves = {}
+        for cls, kwargs, key in orch_defs:
+            avg_acc: np.ndarray | None = None
+            avg_mse: np.ndarray | None = None
+
+            for run_idx in range(100):
+                if run_idx > 0 and run_idx % 20 == 0:
+                    print(f"    Run count: {run_idx}")
+                data_gen = SyntheticDataGenerator(M=M, seed=SEED + run_idx)
+                tasks = data_gen.generate_task_stream(N_TASKS)
+                task_copy = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
+                orch = cls(agents, M, **kwargs)
+
+                acc_run, mse_run = [], []
+                for t, task in enumerate(task_copy):
+                    aidx = orch.select_agent(task, t)
+                    pred = agents[aidx].predict(task)
+                    orch.update(aidx, task, pred)
+
+                    if t >= window:
+                        acc_run.append(np.mean(orch.correctness[-window:]))
+
+                    if key == "OracleOrchestrator":
+                        mse_run.append(0.0)
+                    else:
+                        est = orch.capability_estimator.get_all_capabilities()
+                        mse_run.append(float(np.mean((est - true_caps) ** 2)))
+
+                if avg_acc is None:
+                    avg_acc = np.array(acc_run)
+                    avg_mse = np.array(mse_run)
+                else:
+                    avg_acc += np.array(acc_run)
+                    avg_mse += np.array(mse_run)
+
+            scenario_curves[key] = {
+                "acc_curve": (avg_acc / 100).tolist(),
+                "mse_curve": (avg_mse / 100).tolist(),
+            }
+        all_curves[scenario_name] = scenario_curves
+    return all_curves
+
+
 def plot_baseline_learning_curves(all_results: dict, output_path: str = None,
-                                   window: int = 50):
+                                   window: int = 50, curve_data: dict = None):
     """
     4-panel rolling-accuracy curves (one per scenario).
-    Each panel shows all 5 baselines on the same task stream.
+    If *curve_data* (from compute_baseline_curves) is provided, it is reused
+    to avoid re-running the simulations.
     """
     scenarios = list(all_results.keys())
     orch_defs = [
@@ -253,9 +328,6 @@ def plot_baseline_learning_curves(all_results: dict, output_path: str = None,
         (OracleOrchestrator,  {}, "OracleOrchestrator"),
     ]
 
-    data_gen = SyntheticDataGenerator(M=M, seed=SEED)
-    tasks = data_gen.generate_task_stream(N_TASKS)
-
     fig, axes = plt.subplots(2, 2, figsize=(14, 9), sharex=False)
     axes = axes.flatten()
 
@@ -263,31 +335,39 @@ def plot_baseline_learning_curves(all_results: dict, output_path: str = None,
         agents = SCENARIOS[scenario_name](M)
         print(f"  Learning curves: {scenario_name}")
         for cls, kwargs, key in orch_defs:
-            avg_accs = None
-            for run_idx in range(100):
-                if run_idx > 0 and run_idx % 20 == 0:
-                    print(f"Run count: {run_idx}")
-                    
-                data_gen = SyntheticDataGenerator(M=M, seed=SEED + run_idx)
-                tasks = data_gen.generate_task_stream(N_TASKS)
-                task_copy = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
-                orch = cls(agents, M, **kwargs)
-                accs = []
-                for t, task in enumerate(task_copy):
-                    aidx = orch.select_agent(task, t)
-                    pred = agents[aidx].predict(task)
-                    orch.update(aidx, task, pred)
-                    if t >= window:
-                        accs.append(np.mean(orch.correctness[-window:]))
-                
-                if avg_accs is None:
-                    avg_accs = np.array(accs)
-                else:
-                    avg_accs += np.array(accs)
-            
-            avg_accs = avg_accs / 100
+            # Use pre-computed curve if available
+            if (curve_data is not None
+                    and scenario_name in curve_data
+                    and key in curve_data[scenario_name]):
+                avg_accs = np.array(curve_data[scenario_name][key]["acc_curve"])
+            else:
+                avg_accs = None
+                for run_idx in range(100):
+                    if run_idx > 0 and run_idx % 20 == 0:
+                        print(f"Run count: {run_idx}")
+
+                    data_gen = SyntheticDataGenerator(M=M, seed=SEED + run_idx)
+                    tasks = data_gen.generate_task_stream(N_TASKS)
+                    task_copy = [Task(x=t.x.copy(), y=t.y, region=t.region)
+                                 for t in tasks]
+                    orch = cls(agents, M, **kwargs)
+                    accs = []
+                    for t, task in enumerate(task_copy):
+                        aidx = orch.select_agent(task, t)
+                        pred = agents[aidx].predict(task)
+                        orch.update(aidx, task, pred)
+                        if t >= window:
+                            accs.append(np.mean(orch.correctness[-window:]))
+
+                    if avg_accs is None:
+                        avg_accs = np.array(accs)
+                    else:
+                        avg_accs += np.array(accs)
+
+                avg_accs = avg_accs / 100
+
             ax.plot(
-                range(window, len(task_copy)), avg_accs,
+                range(window, window + len(avg_accs)), avg_accs,
                 color=BASELINE_COLORS[key],
                 label=BASELINE_LABELS[key],
                 linewidth=2,
@@ -298,6 +378,47 @@ def plot_baseline_learning_curves(all_results: dict, output_path: str = None,
         ax.legend(fontsize=7.5)
 
     fig.suptitle("Baseline Orchestrators — Learning Curves",
+                 fontsize=13, fontweight="bold", y=1.01)
+    plt.tight_layout()
+    if output_path:
+        _save(fig, output_path)
+    return fig
+
+
+def plot_baseline_capability_mse(baseline_curves: dict, output_path: str = None):
+    """
+    4-panel plot: capability estimation MSE over the task stream for each
+    baseline orchestrator (OracleOrchestrator excluded — always MSE = 0).
+    Mirrors the teaching MSE plot so the two can be compared directly.
+    """
+    scenarios = list(SCENARIOS.keys())
+    # Oracle always has MSE=0 by definition; exclude for readability
+    orch_keys = [
+        "RandomOrchestrator", "GreedyOrchestrator",
+        "UCB1Orchestrator", "PaperOrchestrator",
+    ]
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9), sharex=False)
+    axes = axes.flatten()
+
+    for ax, scenario in zip(axes, scenarios):
+        for key in orch_keys:
+            cdata = baseline_curves.get(scenario, {}).get(key)
+            if cdata is None:
+                continue
+            mse_curve = cdata["mse_curve"]
+            ax.plot(range(len(mse_curve)), mse_curve,
+                    color=BASELINE_COLORS[key],
+                    label=BASELINE_LABELS[key],
+                    linewidth=2)
+        ax.axhline(TARGET_MSE, color="grey", linestyle="--", linewidth=1.2,
+                   label=f"Target MSE={TARGET_MSE}")
+        ax.set_title(scenario, fontsize=11, fontweight="bold")
+        ax.set_xlabel("Task Index")
+        ax.set_ylabel("Capability MSE (estimated vs true)")
+        ax.legend(fontsize=7.5)
+
+    fig.suptitle("Baseline Orchestrators — Capability Estimation MSE",
                  fontsize=13, fontweight="bold", y=1.01)
     plt.tight_layout()
     if output_path:
@@ -724,6 +845,190 @@ def plot_unified_accuracy(baseline_accs: dict, downstream_teach: dict,
     return fig
 
 
+def compute_teaching_downstream_curves(teaching_results: dict,
+                                        window: int = 50) -> dict:
+    """
+    For each scenario and each teacher, simulate downstream orchestration:
+    run PaperOrchestrator on N_TASKS tasks using the teacher's averaged
+    final capability estimates, track rolling accuracy per step.
+    Averaged over 100 independent runs.
+
+    Returns
+    -------
+    dict: {scenario_name: {teacher_name: {"acc_curve": list}}}
+    """
+    teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
+    all_curves = {}
+
+    for scenario_name, agent_factory in SCENARIOS.items():
+        agents = agent_factory(M)
+        print(f"  Computing teaching downstream curves: {scenario_name}")
+        scenario_curves = {}
+
+        for tname in teacher_names:
+            estimated = teaching_results[scenario_name][tname]["final_estimates"]
+            est_agents = [
+                Agent(name=agents[k].name,
+                      capabilities=estimated[k].copy(),
+                      costs=agents[k].costs)
+                for k in range(len(agents))
+            ]
+
+            avg_acc: np.ndarray | None = None
+            for run_idx in range(100):
+                if run_idx > 0 and run_idx % 20 == 0:
+                    print(f"    Run count: {run_idx}")
+                data_gen = SyntheticDataGenerator(M=M, seed=SEED + run_idx + 2000)
+                tasks = data_gen.generate_task_stream(N_TASKS)
+                orch = PaperOrchestrator(est_agents, M)
+                acc_run = []
+                for t, task in enumerate(tasks):
+                    aidx = orch.select_agent(task, t)
+                    pred = agents[aidx].predict(task)
+                    orch.update(aidx, task, pred)
+                    if t >= window:
+                        acc_run.append(np.mean(orch.correctness[-window:]))
+
+                if avg_acc is None:
+                    avg_acc = np.array(acc_run)
+                else:
+                    avg_acc += np.array(acc_run)
+
+            scenario_curves[tname] = {"acc_curve": (avg_acc / 100).tolist()}
+
+        all_curves[scenario_name] = scenario_curves
+    return all_curves
+
+
+def plot_convergence_rolling_accuracy(baseline_curves: dict,
+                                      teaching_downstream_curves: dict,
+                                      output_path: str = None):
+    """
+    4-panel figure (one per scenario): rolling accuracy for ALL methods —
+    baseline orchestrators (solid) and teaching-guided orchestrators (dashed).
+    x-axis normalized to [0, 1].
+    """
+    scenarios = list(SCENARIOS.keys())
+    orch_keys = [
+        "RandomOrchestrator", "GreedyOrchestrator",
+        "UCB1Orchestrator", "PaperOrchestrator", "OracleOrchestrator",
+    ]
+    teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9), sharex=False)
+    axes = axes.flatten()
+
+    for ax, scenario in zip(axes, scenarios):
+        # Baselines (solid)
+        for key in orch_keys:
+            cdata = baseline_curves.get(scenario, {}).get(key)
+            if cdata is None:
+                continue
+            acc = cdata["acc_curve"]
+            x = np.linspace(0, 1, len(acc))
+            ax.plot(x, acc, color=BASELINE_COLORS[key],
+                    label=BASELINE_LABELS[key], linewidth=2, linestyle="-")
+
+        # Teaching-guided (dashed)
+        for tname in teacher_names:
+            cdata = teaching_downstream_curves.get(scenario, {}).get(tname)
+            if cdata is None:
+                continue
+            acc = cdata["acc_curve"]
+            x = np.linspace(0, 1, len(acc))
+            ax.plot(x, acc, color=TEACHER_COLORS[tname],
+                    label=TEACHER_LABELS[tname], linewidth=2, linestyle="--")
+
+        ax.set_title(scenario, fontsize=11, fontweight="bold")
+        ax.set_xlabel("Normalized Progress  (0 = start → 1 = end)")
+        ax.set_ylabel("Rolling Accuracy")
+        ax.set_ylim(0.25, 1.05)
+        ax.legend(fontsize=6.5, ncol=2)
+
+    style_legend = [
+        Line2D([0], [0], color="black", linewidth=2, linestyle="-",
+               label="Baseline orchestrators"),
+        Line2D([0], [0], color="black", linewidth=2, linestyle="--",
+               label="Teaching-guided (Paper Orch. + estimated caps)"),
+    ]
+    fig.legend(handles=style_legend, fontsize=9,
+               loc="lower center", ncol=2, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(
+        "Convergence — Rolling Accuracy  (All Baselines & Teaching-Guided)",
+        fontsize=13, fontweight="bold", y=1.01,
+    )
+    plt.tight_layout()
+    if output_path:
+        _save(fig, output_path)
+    return fig
+
+
+def plot_convergence_mse(baseline_curves: dict,
+                         teaching_results: dict,
+                         output_path: str = None):
+    """
+    4-panel figure (one per scenario): capability estimation MSE for ALL
+    methods — baseline orchestrators (solid, over N_TASKS tasks) and
+    machine-teaching methods (dashed, over BUDGET evaluation steps).
+    x-axis normalized to [0, 1] so both are directly comparable.
+    OracleOrchestrator excluded (always MSE = 0 by definition).
+    """
+    scenarios = list(SCENARIOS.keys())
+    orch_keys = [
+        "RandomOrchestrator", "GreedyOrchestrator",
+        "UCB1Orchestrator", "PaperOrchestrator",
+    ]
+    teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9), sharex=False)
+    axes = axes.flatten()
+
+    for ax, scenario in zip(axes, scenarios):
+        # Baselines (solid)
+        for key in orch_keys:
+            cdata = baseline_curves.get(scenario, {}).get(key)
+            if cdata is None:
+                continue
+            mse = cdata["mse_curve"]
+            x = np.linspace(0, 1, len(mse))
+            ax.plot(x, mse, color=BASELINE_COLORS[key],
+                    label=BASELINE_LABELS[key], linewidth=2, linestyle="-")
+
+        # Teaching methods (dashed)
+        for tname in teacher_names:
+            tdata = teaching_results.get(scenario, {}).get(tname)
+            if tdata is None:
+                continue
+            mse = tdata["mse_curve"]
+            x = np.linspace(0, 1, len(mse))
+            ax.plot(x, mse, color=TEACHER_COLORS[tname],
+                    label=TEACHER_LABELS[tname], linewidth=2, linestyle="--")
+
+        ax.axhline(TARGET_MSE, color="grey", linestyle=":", linewidth=1.2,
+                   label=f"Target MSE={TARGET_MSE}")
+        ax.set_title(scenario, fontsize=11, fontweight="bold")
+        ax.set_xlabel("Normalized Progress  (0 = start → 1 = end)")
+        ax.set_ylabel("Capability MSE (estimated vs true)")
+        ax.legend(fontsize=6.5, ncol=2)
+
+    style_legend = [
+        Line2D([0], [0], color="black", linewidth=2, linestyle="-",
+               label="Baseline orchestrators  (over task stream)"),
+        Line2D([0], [0], color="black", linewidth=2, linestyle="--",
+               label="Machine teaching  (over evaluation budget)"),
+    ]
+    fig.legend(handles=style_legend, fontsize=9,
+               loc="lower center", ncol=2, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(
+        "Convergence — Capability MSE  (All Baselines & Machine Teaching)",
+        fontsize=13, fontweight="bold", y=1.01,
+    )
+    plt.tight_layout()
+    if output_path:
+        _save(fig, output_path)
+    return fig
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 4.  Prior sensitivity analysis
 # ──────────────────────────────────────────────────────────────────────────────
@@ -923,6 +1228,9 @@ def main():
     # ------------------------------------------------------------------
     baseline_results = run_baseline_experiments()
 
+    print("\nComputing baseline learning curves (accuracy + capability MSE)...")
+    baseline_curves = compute_baseline_curves()
+
     print("\nGenerating baseline figures...")
     plot_baseline_accuracy(
         baseline_results,
@@ -930,7 +1238,12 @@ def main():
     )
     plot_baseline_learning_curves(
         baseline_results,
-        "output/baseline_learning_curves.png"
+        "output/baseline_learning_curves.png",
+        curve_data=baseline_curves,
+    )
+    plot_baseline_capability_mse(
+        baseline_curves,
+        "output/baseline_capability_mse.png",
     )
 
     # ------------------------------------------------------------------
@@ -948,12 +1261,23 @@ def main():
     plot_mse_auc(teaching_results, "output/teaching_mse_auc.png")
 
     # ------------------------------------------------------------------
-    # Part 3 — Unified accuracy comparison
+    # Part 3 — Unified accuracy comparison + convergence comparison
     # ------------------------------------------------------------------
     baseline_accs, downstream_teach = evaluate_downstream_orchestration(teaching_results)
     plot_unified_accuracy(
         baseline_accs, downstream_teach,
         "output/unified_accuracy_comparison.png"
+    )
+    print("\nComputing teaching downstream rolling accuracy curves...")
+    teaching_downstream_curves = compute_teaching_downstream_curves(teaching_results)
+
+    plot_convergence_rolling_accuracy(
+        baseline_curves, teaching_downstream_curves,
+        "output/convergence_rolling_accuracy.png",
+    )
+    plot_convergence_mse(
+        baseline_curves, teaching_results,
+        "output/convergence_mse.png",
     )
 
     # ------------------------------------------------------------------

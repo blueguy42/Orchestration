@@ -238,7 +238,7 @@ from synthetic_experiments import create_agents_varying
 agents = create_agents_varying(M=3)
 
 # Initialize teacher (actively selects agent-region pairs)
-teacher = SurrogateTeacher(agents, M=3, prior="weak", budget=100)
+teacher = SurrogateTeacher(agents, M=3, prior="weak", budget=200)
 
 # Run teaching: returns orchestrator trained on strategically selected tasks
 trained_orchestrator = teacher.run_teaching()
@@ -289,12 +289,11 @@ Core orchestration implementation:
 - `OracleOrchestrator`: Perfect knowledge upper bound
 
 ### `priors.py`
-Prior distributions for Bayesian estimation:
-- **8 Prior Types**: `uniform`, `weak`, `strong`, `optimistic`, `pessimistic`, `very_strong`, `informative_optimistic`, `informative_pessimistic`
-- `Prior`: Base class with `prior_mean` and `prior_variance` properties
-- `BetaPrior`: Beta distribution priors for agent capabilities
-- `DirichletPrior`: Dirichlet distribution priors for region probabilities
-- Utilities for prior comparison and analysis
+Prior distributions for Bayesian capability estimation:
+- **3 Prior Types**: `BetaPrior` (uniform Beta(1,1)), `JeffreysPrior` (Beta(0.5,0.5)), `SkewedExpertPrior` (Beta(3,1))
+- All priors expose `alpha0`, `alpha1`, `name`, `prior_mean()`, and `posterior_mean()`
+- `ALL_PRIORS`: registry list used in prior sensitivity experiments
+- `PRIOR_LABELS`, `PRIOR_COLORS`: display metadata for plots
 
 ### `machine_teaching.py`
 Machine teaching orchestrators:
@@ -317,31 +316,44 @@ Experiment utilities:
 - `plot_learning_curves`: Visualize learning over time
 
 ### `run_experiments.py`
-Main comprehensive experiment script:
-- Runs baseline orchestrators (Random, Greedy, UCB1, Paper, Oracle)
-- Runs machine teaching approaches (Random, RoundRobin, Surrogate, Imitation, Omniscient)
-- Compares approaches across 4 expertise scenarios
-- Supports multiple prior distributions for sensitivity analysis
-- **100 independent runs** for robust statistical analysis
-- Generates visualization files comparing methods
-- Prints comprehensive summary tables
+Main comprehensive experiment script with 4 parts:
+- **Part 1** — Baseline orchestrators (Random, Greedy, UCB1, Paper, Oracle) across all scenarios
+- **Part 2** — Machine teaching approaches (Random, RoundRobin, Surrogate, Imitation, Omniscient): MSE convergence and efficiency
+- **Part 3** — Unified comparison: downstream orchestration accuracy and convergence curves for all baselines and teaching-guided methods
+- **Part 4** — Prior sensitivity analysis (Uniform, Jeffreys, Expert) on the Varying scenario
+- **100 independent runs** per configuration for robust statistical analysis
+- Generates all visualizations to `output/` and prints summary tables
 
 ## Outputs Generated
 
 ### Experiment Results (`run_experiments.py`)
 
-Generates comprehensive visualizations and analysis:
+All figures are saved to `output/`:
 
-1. **Baseline Orchestrator Comparisons** - Bar charts across all expertise scenarios
-2. **Learning Curves** - Convergence over time with moving averages
-3. **Machine Teaching Analysis** - MSE convergence for different teaching strategies
-4. **Prior Distribution Effects** - Sensitivity analysis across prior types
+**Part 1 — Baselines**
+- `baseline_accuracy.png` — grouped bar chart of overall accuracy per scenario
+- `baseline_learning_curves.png` — rolling accuracy over the task stream (4 panels)
+- `baseline_capability_mse.png` — capability estimation MSE over the task stream (4 panels)
 
-Console output includes:
-- Performance tables for each scenario and method
-- Appropriateness metrics and statistics
-- Teaching efficiency measurements
-- Prior-specific analysis
+**Part 2 — Machine Teaching**
+- `teaching_mse_curves.png` — MSE convergence per teacher × scenario (4 panels)
+- `teaching_efficiency.png` — steps to target MSE bar chart
+- `teaching_mse_heatmap.png` — final MSE heatmap (scenarios × teachers)
+- `capability_estimates_varying.png` — true vs estimated capability scatter (Varying scenario)
+- `teaching_convergence_speed.png` — steps to 2×, 1×, ½× target MSE (Varying)
+- `teaching_mse_auc.png` — area under MSE curve (lower = faster convergence)
+
+**Part 3 — Unified Comparison**
+- `unified_accuracy_comparison.png` — baselines vs teaching-guided accuracy (Varying scenario)
+- `convergence_rolling_accuracy.png` — rolling accuracy for all methods, normalized x-axis (4 panels)
+- `convergence_mse.png` — capability MSE for all methods, normalized x-axis (4 panels)
+
+**Part 4 — Prior Sensitivity (Varying scenario)**
+- `prior_mse_curves.png` — MSE curves per prior type
+- `prior_efficiency_bars.png` — steps to target MSE per teacher × prior
+- `prior_final_mse_heatmap.png` — final MSE heatmap (teachers × priors)
+
+Console output includes performance tables, appropriateness metrics, teaching efficiency, and prior-specific analysis.
 
 ## Machine Teaching Framework
 
@@ -374,7 +386,7 @@ Runs comprehensive analysis:
 - **4 expertise scenarios**: Approximately Invariant, Dominant, Dominant+Misaligned Cost, Varying
 - **5 baseline orchestrators**: Random, Greedy, UCB1, Paper, Oracle  
 - **5 machine teaching approaches**: Random, RoundRobin, Surrogate, Imitation, Omniscient
-- **Multiple prior distributions**: Uniform, Weak, Strong, Optimistic, Pessimistic, and others
+- **3 prior distributions**: Uniform Beta(1,1), Jeffreys Beta(0.5,0.5), Expert Beta(3,1)
 - **100 independent runs** per configuration for robust statistical analysis
 - Generates visualizations in `output/` directory
 
