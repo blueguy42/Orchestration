@@ -33,8 +33,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-# numpy ≥ 2.0 uses trapezoid; fall back gracefully for older installs.
-_trapz = getattr(np, "trapezoid", np.trapz)
+_trapz = np.trapezoid
 
 from orchestration_framework import (
     Agent, Task,
