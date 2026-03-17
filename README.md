@@ -283,7 +283,7 @@ Core orchestration implementation:
 - `Task`: Data structure for tasks (input, label, region)
 - `Agent`: Agent with region-specific capabilities and costs
 - `RegionEstimator`: Dirichlet-Multinomial Bayesian estimation of region probabilities
-- `CapabilityEstimator`: Beta-Binomial Bayesian estimation of agent capabilities per region; supports custom prior objects from `priors.py`
+- `CapabilityEstimator`: Beta-Binomial Bayesian estimation of agent capabilities per region; supports custom prior objects from `priors.py`; exposes `get_capability()` (MAP), `get_posterior_mean()`, `get_all_capabilities()`, `get_all_posterior_means()`, and `inject_estimates()` (pre-seeds with virtual observations for teaching-guided warm-starts)
 - `BaseOrchestrator`: Abstract base class
 - `PaperOrchestrator`: Bhatt et al. empirical utility implementation
 - `UCB1Orchestrator`: Upper Confidence Bound (per-region bandit)
@@ -294,19 +294,23 @@ Core orchestration implementation:
 ### `priors.py`
 Prior distributions for Bayesian capability estimation:
 - **3 Prior Types**: `BetaPrior` (uniform Beta(1,1)), `JeffreysPrior` (Beta(0.5,0.5)), `SkewedExpertPrior` (Beta(3,1))
-- All priors expose `alpha0`, `alpha1`, `name`, `prior_mean()`, and `posterior_mean()`
+- All priors expose `alpha0`, `alpha1`, `name`, `prior_mean()`, `prior_variance()`, `posterior_params()`, `posterior_mean()`, `posterior_variance()`, and `map_estimate()`
 - `ALL_PRIORS`: registry list used in prior sensitivity experiments
 - `PRIOR_LABELS`, `PRIOR_COLORS`: display metadata for plots
 
 ### `machine_teaching.py`
-Machine teaching orchestrators:
-- `BaseTeacher`: Abstract teacher base class
-- `OmniscientTeacher`: Knows true capabilities (upper bound)
-- `ImitationTeacher`: Maintains internal capability estimate
-- `SurrogateTeacher`: Uncertainty-based sampling (max query entropy)
-- `RoundRobinTeacher`: Deterministic region cycling
-- `RandomTeacher`: Uniform random sampling (lower bound)
-- Teaching experiment infrastructure
+Machine teaching orchestrators (inspired by Liu et al. 2017 "Iterative Machine Teaching"):
+- `TeachingStep`: Dataclass recording one evaluation step (agent, region, outcome, MSE)
+- `TaskPool`: Region-grouped task pool for controlled teacher queries
+- `BaseTeacher`: Abstract teacher base class with `run()`, `step()`, `current_estimates()`, `get_posterior_variance()`, `total_variance()`, `get_summary()`
+- `OmniscientTeacher`: Knows true capabilities; selects by Expected MSE Reduction (EMSR) criterion (upper bound)
+- `ImitationTeacher`: Maintains a Robbins-Monro running estimate of θ* and uses it in the EMSR formula (bridges omniscient and surrogate)
+- `SurrogateTeacher`: Uncertainty-based sampling via maximum posterior variance (A-optimal / uncertainty sampling); does not require knowledge of true capabilities
+- `RoundRobinTeacher`: Deterministic cycling through agent-region pairs
+- `RandomTeacher`: Uniform random selection (lower bound)
+- `run_teaching_experiment()`: Runs all teacher classes on a shared agent set with isolated RNGs
+- `compute_teaching_efficiency()`: Steps-to-target-MSE metric
+- `print_teaching_results()`: Console summary table
 
 ### `synthetic_experiments.py`
 Experiment utilities:
@@ -368,9 +372,9 @@ An active learning approach for efficient capability estimation. Instead of pass
 ### Teaching Approaches
 
 **Available Teachers:**
-1. **OmniscientTeacher** - Knows true capabilities (upper bound)
-2. **ImitationTeacher** - Maintains internal capability estimate and learns from orchestration feedback
-3. **SurrogateTeacher** - Selects tasks that maximize uncertainty (highest query entropy)
+1. **OmniscientTeacher** - Knows true capabilities; selects by Expected MSE Reduction (EMSR) criterion (upper bound)
+2. **ImitationTeacher** - Maintains a Robbins-Monro running estimate of true capabilities and uses it in the EMSR formula (bridges omniscient and surrogate)
+3. **SurrogateTeacher** - Selects the slot with maximum posterior variance (A-optimal uncertainty sampling); does not require true capabilities
 4. **RoundRobinTeacher** - Deterministic cycling through agent-region pairs
 5. **RandomTeacher** - Uniform random selection (lower bound)
 
@@ -400,6 +404,12 @@ All results are stored in the `output/` folder for easy access and further analy
 
 ## Requirements
 
+```bash
+pip install -r requirements.txt
+```
+
+Dependencies (`requirements.txt`):
+
 ```
 numpy>=1.21.0
 matplotlib>=3.4.0
@@ -407,6 +417,10 @@ matplotlib>=3.4.0
 
 ## References
 
-Bhatt, U., Kapoor, S., Upadhyay, M., Sucholutsky, I., Quinzan, F., Collins, K. M., 
-Weller, A., Wilson, A. G., and Zafar, M. B. (2025). When should we orchestrate 
+Bhatt, U., Kapoor, S., Upadhyay, M., Sucholutsky, I., Quinzan, F., Collins, K. M.,
+Weller, A., Wilson, A. G., and Zafar, M. B. (2025). When should we orchestrate
 multiple agents? arXiv preprint arXiv:2503.13577.
+
+Liu, W., Dai, B., Humayun, A., Tay, C., Yu, C., Smith, L. B., Rehg, J. M., and
+Song, L. (2017). Iterative machine teaching. Proceedings of the 34th International
+Conference on Machine Learning (ICML), PMLR 70:2149–2158.

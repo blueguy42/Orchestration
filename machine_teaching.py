@@ -2,36 +2,53 @@
 Machine Teaching for Efficient Capability Identification in Multi-Agent Orchestration
 
 Implements a machine teaching approach for efficiently identifying agent capabilities
-across task regions, as described in the MPhil dissertation proposal extending
-Bhatt et al. (2025).  Rather than learning capabilities passively from a random task
-stream, a teacher strategically selects which (agent, region) slot to probe next,
-minimising the evaluation budget required to reach accurate capability estimates.
+across task regions, extending Bhatt et al. (2025) as described in the MPhil
+dissertation proposal.
 
-The "student" is a Beta-Binomial CapabilityEstimator (from orchestration_framework.py)
+Instead of passively observing a random task stream, a teacher strategically selects
+which (agent, region) slot to probe next, minimising the evaluation budget required
+to reach accurate capability estimates.
+
+The "student" is a Beta-Binomial CapabilityEstimator (orchestration_framework.py)
 that maintains a posterior over each agent's correctness probability θ_{k,m} in each
-region.  The teacher's goal is to drive all K × M estimates close to their true values
-as quickly as possible (minimising MSE), then hand them to a downstream orchestrator.
+region.  The teacher drives all K × M estimates close to their true values as quickly
+as possible (minimising MSE), then hands them to a downstream orchestrator.
 
-Teachers (based on Liu et al. 2017 "Iterative Machine Teaching", ICML)
------------------------------------------------------------------------
+Teachers (inspired by Liu et al. 2017 "Iterative Machine Teaching", ICML)
+--------------------------------------------------------------------------
 OmniscientTeacher  — Knows true capabilities θ*; selects the slot whose next
                      observation gives the greatest expected reduction in MSE
-                     (EMSR criterion, closed-form for Beta-Binomial).
+                     (EMSR criterion, closed-form for Beta-Binomial posterior mean).
                      Theoretical upper bound on teaching efficiency.
 
 SurrogateTeacher   — Does not know θ*; selects the slot with the highest
-                     posterior variance (D-optimal / maximum entropy design).
-                     A practical strategy when true capabilities are unknown.
+                     posterior variance (uncertainty sampling / A-optimal design).
+                     Note: this is NOT identical to max query entropy
+                     (H[Bernoulli(θ̂)]) — variance peaks at α₁=α₀ while query
+                     entropy peaks at θ̂=0.5.  In practice the two are highly
+                     correlated but the criterion used here is posterior variance.
+                     Also note: under the uniform Beta(1,1) prior all slots start
+                     with identical variance, so the surrogate teacher behaves like
+                     round-robin for the first K×M steps; a random tiebreak is
+                     applied to improve initial diversity.
 
-ImitationTeacher   — Bridges omniscient and surrogate teachers.  Maintains a
-                     Robbins-Monro running estimate v_{k,m} of θ*_{k,m} and
-                     uses it in the EMSR formula in place of θ*.  The learning
-                     rate decays as η = c / (c + n_{k,m}) per slot.
+ImitationTeacher   — Bridges omniscient and surrogate.  Maintains a
+                     Robbins-Monro running estimate v_{k,m} of θ*_{k,m} (by
+                     averaging observed binary outcomes with a decaying rate
+                     η = c / (c + n_{k,m})) and uses v in the EMSR formula in
+                     place of θ*.
+                     Note: This adapts Liu et al.'s imitation teacher to the
+                     Bernoulli / Beta-Binomial setting.  Liu et al.'s original
+                     teacher imitates the student's weight vector via stochastic
+                     mirror descent on a regression problem; here v tracks scalar
+                     outcome probabilities, which is the natural analogue for
+                     binary correctness data.
 
 RoundRobinTeacher  — Deterministic baseline: cycles through all (agent, region)
-                     pairs in fixed order.
+                     pairs in fixed row-major order.
 
 RandomTeacher      — Stochastic baseline: selects (agent, region) uniformly.
+                     Uses an isolated RNG (no global numpy state pollution).
                      Lower bound on teaching efficiency.
 """
 
@@ -84,37 +101,27 @@ class TaskPool:
 
 
 # ---------------------------------------------------------------------------
-# Beta-Binomial helper: expected posterior mean after one more observation
+# Beta-Binomial helpers: EMSR and posterior variance
 # ---------------------------------------------------------------------------
 
-def _expected_posterior_mean_after_obs(alpha1: float, alpha0: float,
-                                       n_cor: int, n_inc: int,
-                                       theta_star: float) -> float:
-    """
-    E[ θ̂_{new} | θ* ] after one more Bernoulli(θ*) observation.
-
-    With probability θ*  we observe correct → new posterior mean = (α₁+n_cor+1)/(α₀+α₁+n+1)
-    With probability 1-θ* we observe incorrect → new posterior mean = (α₁+n_cor)/(α₀+α₁+n+1)
-
-    Returns the expectation over these two outcomes.
-    """
-    n = n_cor + n_inc
-    new_denom = alpha0 + alpha1 + n + 1
-    mean_if_correct   = (alpha1 + n_cor + 1) / new_denom
-    mean_if_incorrect = (alpha1 + n_cor)     / new_denom
-    return theta_star * mean_if_correct + (1 - theta_star) * mean_if_incorrect
-
-
 def _expected_mse_reduction(alpha1: float, alpha0: float,
-                            n_cor: int, n_inc: int,
-                            theta_star: float) -> float:
+                             n_cor: int, n_inc: int,
+                             theta_star: float) -> float:
     """
     Expected reduction in squared error for slot (k,m) from one observation.
 
-    E[Δ MSE_{k,m}] = (θ* - θ̂_current)² - E[(θ* - θ̂_new)² | θ*]
+    E[Δ SE_{k,m}] = (θ* − θ̂_current)² − E[(θ* − θ̂_new)² | θ*]
 
-    where the expectation is over the Bernoulli(θ*) outcome.
-    Computed in closed form for the Beta-Binomial posterior mean.
+    where θ̂ is the Beta-Binomial posterior mean and the expectation is over
+    the Bernoulli(θ*) outcome.  Closed-form derivation:
+
+        θ̂_current = (α₁ + n_cor) / (α₀ + α₁ + n_total)
+        new_denom  = α₀ + α₁ + n_total + 1
+        θ̂_correct  = (α₁ + n_cor + 1) / new_denom
+        θ̂_incorrect= (α₁ + n_cor)     / new_denom
+
+        E[Δ SE] = (θ* − θ̂)²
+                  − [θ* (θ* − θ̂_correct)²  + (1−θ*)(θ* − θ̂_incorrect)²]
     """
     n = n_cor + n_inc
     s = alpha0 + alpha1 + n
@@ -124,10 +131,8 @@ def _expected_mse_reduction(alpha1: float, alpha0: float,
     mean_if_correct   = (alpha1 + n_cor + 1) / new_s
     mean_if_incorrect = (alpha1 + n_cor)     / new_s
 
-    # Current squared error
     current_se = (theta_star - theta_hat) ** 2
 
-    # Expected squared error after observation
     se_if_correct   = (theta_star - mean_if_correct) ** 2
     se_if_incorrect = (theta_star - mean_if_incorrect) ** 2
     expected_new_se = theta_star * se_if_correct + (1 - theta_star) * se_if_incorrect
@@ -135,38 +140,19 @@ def _expected_mse_reduction(alpha1: float, alpha0: float,
     return current_se - expected_new_se
 
 
-def _expected_info_gain(alpha1: float, alpha0: float,
-                        n_cor: int, n_inc: int,
-                        theta_star: float) -> float:
+def _posterior_variance(alpha1: float, alpha0: float,
+                        n_cor: int, n_inc: int) -> float:
     """
-    Expected KL divergence between posterior-after-observation and current
-    posterior for slot (k,m), i.e. the mutual information between the next
-    observation and θ_{k,m}.
+    Variance of the Beta(α₁ + n_cor, α₀ + n_inc) posterior.
 
-    For Beta(a,b) → Beta(a+1,b) or Beta(a,b+1):
-        E_y[ KL( Beta_new || Beta_current ) ]
-    = θ* · KL(Beta(a+1,b) || Beta(a,b)) + (1−θ*) · KL(Beta(a,b+1) || Beta(a,b))
+        Var[θ] = a₁ · a₀ / (s² · (s + 1))
 
-    We use a second-order Taylor approximation:
-        KL(Beta(a',b') || Beta(a,b)) ≈ ½ (Δμ)² / Var[θ]
-    where Δμ is the shift in posterior mean and Var[θ] is the current variance.
+    where a₁ = α₁ + n_cor, a₀ = α₀ + n_inc, s = a₁ + a₀.
     """
-    a = alpha1 + n_cor
-    b = alpha0 + n_inc
-    s = a + b
-    var = (a * b) / (s * s * (s + 1))
-
-    if var < 1e-15:
-        return 0.0
-
-    new_s = s + 1
-    shift_if_correct   = (a + 1) / new_s - a / s
-    shift_if_incorrect = a / new_s       - a / s
-
-    kl_correct   = 0.5 * shift_if_correct ** 2   / var
-    kl_incorrect = 0.5 * shift_if_incorrect ** 2  / var
-
-    return theta_star * kl_correct + (1 - theta_star) * kl_incorrect
+    a1 = alpha1 + n_cor
+    a0 = alpha0 + n_inc
+    s  = a1 + a0
+    return (a1 * a0) / (s * s * (s + 1))
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +170,7 @@ class BaseTeacher:
         alpha0: float = 1.0,
         alpha1: float = 1.0,
         prior=None,
+        seed: int = 42,
     ):
         self.agents = agents
         self.K = len(agents)
@@ -192,7 +179,8 @@ class BaseTeacher:
         self.capability_estimator = CapabilityEstimator(
             self.K, self.M, alpha0, alpha1, prior=prior
         )
-        self._pred_rng = np.random.default_rng(42)
+        # Isolated RNG for agent predictions — reproducible, no global state.
+        self._pred_rng = np.random.default_rng(seed + 7919)
         self.true_caps = np.array(
             [[agents[k].get_capability(m) for m in range(M)] for k in range(self.K)]
         )
@@ -225,41 +213,20 @@ class BaseTeacher:
     def current_estimates(self) -> np.ndarray:
         return self.capability_estimator.get_all_posterior_means()
 
-    def posterior_variance(self, agent_idx: int, region: int) -> float:
+    def get_posterior_variance(self, agent_idx: int, region: int) -> float:
         n_inc = int(self.capability_estimator.counts[agent_idx, region, 0])
         n_cor = int(self.capability_estimator.counts[agent_idx, region, 1])
         ce = self.capability_estimator
         if ce.prior is not None and hasattr(ce.prior, "posterior_variance"):
             return ce.prior.posterior_variance(n_cor, n_inc)
-        a1 = n_cor + ce.alpha1
-        a0 = n_inc + ce.alpha0
-        s = a1 + a0
-        return (a1 * a0) / (s * s * (s + 1))
+        return _posterior_variance(ce.alpha1, ce.alpha0, n_cor, n_inc)
 
     def total_variance(self) -> float:
         return sum(
-            self.posterior_variance(k, m)
+            self.get_posterior_variance(k, m)
             for k in range(self.K)
             for m in range(self.M)
         )
-
-    def info_gain(self, agent_idx: int, region: int) -> float:
-        """Expected information gain for one observation of (k, m)."""
-        ce = self.capability_estimator
-        n_cor = int(ce.counts[agent_idx, region, 1])
-        n_inc = int(ce.counts[agent_idx, region, 0])
-        theta_star = self.true_caps[agent_idx, region]
-        return _expected_info_gain(ce.alpha1, ce.alpha0, n_cor, n_inc, theta_star)
-
-    def total_info_gain_per_step(self) -> List[float]:
-        """Cumulative information gain at each step (for plotting)."""
-        gains = []
-        cum = 0.0
-        for s in self.history:
-            # Approximate: use the info gain computed before the update
-            # For simplicity we use a post-hoc metric instead
-            gains.append(s.mse)
-        return gains
 
     def get_summary(self) -> Dict:
         mses = [s.mse for s in self.history]
@@ -274,7 +241,7 @@ class BaseTeacher:
 
 
 # ---------------------------------------------------------------------------
-# 1. Omniscient Teacher — Expected MSE Reduction
+# 1. Omniscient Teacher — Expected MSE Reduction (EMSR)
 # ---------------------------------------------------------------------------
 
 class OmniscientTeacher(BaseTeacher):
@@ -283,21 +250,24 @@ class OmniscientTeacher(BaseTeacher):
 
     Selection criterion: Expected MSE Reduction (EMSR).
 
-    For each candidate slot (k, m), compute the exact expected reduction
-    in squared estimation error from one additional Bernoulli(θ*_{k,m})
-    observation, in closed form for the Beta-Binomial posterior mean:
+    For each candidate slot (k, m), compute the exact expected reduction in
+    squared estimation error from one additional Bernoulli(θ*_{k,m}) observation,
+    in closed form for the Beta-Binomial posterior mean:
 
         EMSR(k,m) = (θ* − θ̂)²  −  E_y[(θ* − θ̂_new)² | θ*]
 
-    Select the (k, m) with maximum EMSR.  This is theoretically optimal
-    for greedy one-step-ahead MSE minimisation.
+    Select the (k, m) with maximum EMSR.  This is the greedy one-step-ahead
+    optimal criterion for MSE minimisation.
+
+    Bootstrap: every (k, m) slot is visited once in row-major order before
+    EMSR-guided selection begins (total_obs < K*M phase).
     """
 
     def select_pair(self, t: int) -> Tuple[int, int]:
         # Bootstrap: visit every (k, m) at least once
-        total_obs = np.sum(self.capability_estimator.counts)
+        total_obs = int(np.sum(self.capability_estimator.counts))
         if total_obs < self.K * self.M:
-            slot = int(total_obs) % (self.K * self.M)
+            slot = total_obs % (self.K * self.M)
             return slot // self.M, slot % self.M
 
         ce = self.capability_estimator
@@ -309,11 +279,9 @@ class OmniscientTeacher(BaseTeacher):
                 n_cor = int(ce.counts[k, m, 1])
                 n_inc = int(ce.counts[k, m, 0])
                 theta_star = self.true_caps[k, m]
-
                 score = _expected_mse_reduction(
                     ce.alpha1, ce.alpha0, n_cor, n_inc, theta_star
                 )
-
                 if score > best_score:
                     best_score = score
                     best_k, best_m = k, m
@@ -322,29 +290,56 @@ class OmniscientTeacher(BaseTeacher):
 
 
 # ---------------------------------------------------------------------------
-# 2. Surrogate Teacher — Maximum Posterior Variance (D-optimal)
+# 2. Surrogate Teacher — Maximum Posterior Variance (uncertainty sampling)
 # ---------------------------------------------------------------------------
 
 class SurrogateTeacher(BaseTeacher):
     """
     Does NOT know θ*.
 
-    Uses maximum posterior variance (D-optimal experimental design):
-        score(k, m) = Var[θ̂_{k,m}]
+    Selection criterion: maximum posterior variance (A-optimal / uncertainty
+    sampling):
+        score(k, m) = Var[θ_{k,m} | data]  =  a₁ a₀ / (s² (s+1))
 
-    Equivalent to maximising expected information gain when no knowledge
-    of the true parameter is available.
+    This selects the slot where our Beta posterior is most diffuse, i.e. where
+    we are most uncertain about the agent's capability.
+
+    Note on relationship to Liu et al. (2017):
+    Liu et al.'s surrogate teacher replaces the T2 term in the omniscient
+    objective with a convexity lower bound that only requires querying the
+    learner's function output.  Here, without access to a gradient-based
+    learner model, we adapt the surrogate concept to Bayesian experimental
+    design: we select the slot that maximises posterior uncertainty, which is
+    the natural analogue when θ* is unknown.
+
+    Note on tiebreaking:
+    Under a uniform Beta(1,1) prior all K×M slots start with identical
+    variance.  A small random perturbation is added to break ties and avoid
+    deterministically always starting at (k=0, m=0).
     """
 
+    def __init__(self, *args, seed: int = 42, **kwargs):
+        super().__init__(*args, seed=seed, **kwargs)
+        # Dedicated RNG for tiebreaking — isolated from prediction RNG.
+        self._select_rng = np.random.default_rng(seed + 1337)
+
     def select_pair(self, t: int) -> Tuple[int, int]:
+        ce = self.capability_estimator
         best_score = -np.inf
         best_k, best_m = 0, 0
+
         for k in range(self.K):
             for m in range(self.M):
-                score = self.posterior_variance(k, m)
+                n_cor = int(ce.counts[k, m, 1])
+                n_inc = int(ce.counts[k, m, 0])
+                # Add a tiny random tiebreak so equal-variance slots are not
+                # always resolved to (k=0, m=0).
+                score = (self.get_posterior_variance(k, m)
+                         + self._select_rng.random() * 1e-9)
                 if score > best_score:
                     best_score = score
                     best_k, best_m = k, m
+
         return best_k, best_m
 
 
@@ -356,28 +351,40 @@ class ImitationTeacher(BaseTeacher):
     """
     Bridges omniscient and surrogate teachers.
 
-    Maintains an internal Robbins-Monro estimate v_{k,m} of θ*_{k,m}:
+    Maintains a Robbins-Monro running estimate v_{k,m} of θ*_{k,m} by
+    averaging observed binary outcomes with a per-slot decaying learning rate:
 
         v_{k,m}^{t+1} = v_{k,m}^t + η_t · (outcome − v_{k,m}^t)
 
-    where η_t = c / (c + n_{k,m}^t) decays per-slot for convergence.
+    where η_t = c / (c + n_{k,m}) and outcome ∈ {0, 1}.
 
     Selection uses v in place of θ* in the EMSR formula:
-        score(k,m) = E_v[MSE reduction] (same closed form, replacing θ* with v)
+        score(k,m) = EMSR(v_{k,m})  (same closed form as OmniscientTeacher)
+
+    Relationship to Liu et al. (2017):
+    Liu et al.'s imitation teacher learns to imitate the student's weight
+    vector w^t (a continuous regression parameter) via stochastic mirror
+    descent, so that it can compute T2 = ⟨w^t − w*, ∂ℓ/∂w⟩ without direct
+    access to w^t.  In our Bernoulli / Beta-Binomial setting the analogous
+    "parameter" is the scalar θ*_{k,m} for each slot.  The Robbins-Monro
+    update is the natural adaptation: it converges to θ* by the strong law of
+    large numbers and provides the same conceptual role as the mirror-descent
+    imitation in the original paper.
 
     Parameters
     ----------
-    eta_base : float
+    eta_v : float
         Constant c in the decay schedule η = c / (c + n).  Default 5.0.
     """
 
-    def __init__(self, *args, eta_v: float = 5.0, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, eta_v: float = 5.0, seed: int = 42, **kwargs):
+        super().__init__(*args, seed=seed, **kwargs)
         self.eta_base = eta_v
         prior_mean = (
             self.capability_estimator.alpha1
             / (self.capability_estimator.alpha0 + self.capability_estimator.alpha1)
         )
+        # Initialise v at the prior mean for each slot.
         self.v = np.full((self.K, self.M), prior_mean)
         self._slot_obs_count = np.zeros((self.K, self.M))
 
@@ -389,7 +396,7 @@ class ImitationTeacher(BaseTeacher):
 
         self.capability_estimator.update(agent_idx, region, is_correct)
 
-        # Robbins-Monro update with decaying rate
+        # Robbins-Monro update of v_{k,m} (after observation, before next select).
         self._slot_obs_count[agent_idx, region] += 1
         n_slot = self._slot_obs_count[agent_idx, region]
         eta_t = self.eta_base / (self.eta_base + n_slot)
@@ -410,9 +417,10 @@ class ImitationTeacher(BaseTeacher):
         return record
 
     def select_pair(self, t: int) -> Tuple[int, int]:
-        total_obs = np.sum(self.capability_estimator.counts)
+        # Bootstrap: visit every (k, m) at least once
+        total_obs = int(np.sum(self.capability_estimator.counts))
         if total_obs < self.K * self.M:
-            slot = int(total_obs) % (self.K * self.M)
+            slot = total_obs % (self.K * self.M)
             return slot // self.M, slot % self.M
 
         ce = self.capability_estimator
@@ -423,12 +431,10 @@ class ImitationTeacher(BaseTeacher):
             for m in range(self.M):
                 n_cor = int(ce.counts[k, m, 1])
                 n_inc = int(ce.counts[k, m, 0])
-
-                # Use v (our Robbins-Monro estimate) in place of θ*
+                # Use v (Robbins-Monro estimate of θ*) in the EMSR formula.
                 score = _expected_mse_reduction(
                     ce.alpha1, ce.alpha0, n_cor, n_inc, self.v[k, m]
                 )
-
                 if score > best_score:
                     best_score = score
                     best_k, best_m = k, m
@@ -441,15 +447,29 @@ class ImitationTeacher(BaseTeacher):
 # ---------------------------------------------------------------------------
 
 class RandomTeacher(BaseTeacher):
-    """Selects (agent, region) uniformly at random."""
+    """
+    Selects (agent, region) uniformly at random.
+
+    Uses an isolated np.random.Generator seeded from the constructor — no
+    global numpy state is modified, ensuring reproducibility.
+    """
+
+    def __init__(self, *args, seed: int = 42, **kwargs):
+        super().__init__(*args, seed=seed, **kwargs)
+        self._select_rng = np.random.default_rng(seed + 2718)
+
     def select_pair(self, t: int) -> Tuple[int, int]:
-        k = np.random.randint(0, self.K)
-        m = np.random.randint(0, self.M)
+        k = int(self._select_rng.integers(0, self.K))
+        m = int(self._select_rng.integers(0, self.M))
         return k, m
 
 
 class RoundRobinTeacher(BaseTeacher):
-    """Cycles deterministically through all (agent, region) pairs."""
+    """
+    Cycles deterministically through all (agent, region) pairs in row-major
+    order: (0,0), (0,1), ..., (0,M-1), (1,0), ..., (K-1,M-1), then repeats.
+    """
+
     def select_pair(self, t: int) -> Tuple[int, int]:
         slot = t % (self.K * self.M)
         return slot // self.M, slot % self.M
@@ -468,22 +488,28 @@ def run_teaching_experiment(
     tasks_per_region: int = 500,
     prior=None,
 ) -> Dict[str, Dict]:
-    """Run all teacher classes on the same agent set.  Each gets isolated RNG."""
+    """
+    Run all teacher classes on the same agent set with isolated RNGs.
+
+    Each teacher receives its own TaskPool (same seed → same pool) and its
+    own prediction RNG, so results are reproducible and independent.
+    """
     results = {}
     for teacher_cls, kwargs in teacher_classes:
-        np.random.seed(seed)
         pool = TaskPool(M=M, tasks_per_region=tasks_per_region, seed=seed)
         kw = dict(kwargs)
         if prior is not None:
             kw["prior"] = prior
+        kw.setdefault("seed", seed)
         teacher = teacher_cls(agents=agents, M=M, task_pool=pool, **kw)
-        teacher._pred_rng = np.random.default_rng(seed + 7919)
         teacher.run(budget)
         results[teacher_cls.__name__] = teacher.get_summary()
     return results
 
 
-def compute_teaching_efficiency(results: Dict[str, Dict], target_mse: float) -> Dict[str, Optional[int]]:
+def compute_teaching_efficiency(
+    results: Dict[str, Dict], target_mse: float
+) -> Dict[str, Optional[int]]:
     efficiency = {}
     for name, summary in results.items():
         curve = summary["mse_curve"]
@@ -508,7 +534,8 @@ def print_teaching_results(results: Dict[str, Dict], target_mse: float = 0.01):
     print()
 
     ref_name = next(
-        (n for n in ["OmniscientTeacher", "ImitationTeacher", "SurrogateTeacher"] if n in results),
+        (n for n in ["OmniscientTeacher", "ImitationTeacher", "SurrogateTeacher"]
+         if n in results),
         next(iter(results)),
     )
     ref = results[ref_name]
@@ -516,7 +543,7 @@ def print_teaching_results(results: Dict[str, Dict], target_mse: float = 0.01):
     print(f"Capability estimates (after budget) — {ref_name}")
     print(f"  {'':12} " + "  ".join(f"Region {m}" for m in range(M)))
     for k in range(K):
-        est_row = "  ".join(f"{ref['final_estimates'][k,m]:.3f}" for m in range(M))
+        est_row  = "  ".join(f"{ref['final_estimates'][k,m]:.3f}" for m in range(M))
         true_row = "  ".join(f"{ref['true_caps'][k,m]:.3f}" for m in range(M))
         print(f"  Agent_{k+1} est  {est_row}")
         print(f"  Agent_{k+1} true {true_row}")
