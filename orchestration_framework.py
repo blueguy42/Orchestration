@@ -28,6 +28,13 @@ CapabilityEstimator — Beta-Binomial posterior per (agent, region) slot;
                       supports custom prior objects from priors.py and
                       exposes both MAP estimates (for orchestration) and
                       posterior means (for teaching modules)
+
+Randomness
+----------
+All stochastic components accept an explicit np.random.Generator (rng).
+Agent.predict() and RandomOrchestrator fall back to a module-level default
+Generator when rng=None, never touching the global np.random state.
+This ensures full reproducibility without np.random.seed() calls.
 """
 
 import numpy as np
@@ -215,14 +222,18 @@ class BaseOrchestrator(ABC):
     """Base class for orchestration algorithms"""
 
     def __init__(self, agents: List[Agent], M: int,
-                 rng: np.random.Generator = None):
+                 rng: np.random.Generator = None,
+                 capability_estimator=None):
         self.agents = agents
         self.K = len(agents)
         self.M = M
         # Isolated Generator — each orchestrator instance is reproducible.
         self._rng = rng if rng is not None else np.random.default_rng(0)
         self.region_estimator = RegionEstimator(M)
-        self.capability_estimator = CapabilityEstimator(self.K, M)
+        # Allow any drop-in estimator; default to Beta-Binomial.
+        self.capability_estimator = (capability_estimator
+                                     if capability_estimator is not None
+                                     else CapabilityEstimator(self.K, M))
         self.history = []
         self.selected_agents = []
         self.correctness = []
@@ -299,8 +310,10 @@ class UCB1Orchestrator(BaseOrchestrator):
     """
 
     def __init__(self, agents: List[Agent], M: int, c: float = 1.0,
-                 rng: np.random.Generator = None):
-        super().__init__(agents, M, rng=rng)
+                 rng: np.random.Generator = None,
+                 capability_estimator=None):
+        super().__init__(agents, M, rng=rng,
+                         capability_estimator=capability_estimator)
         self.c = c
         self.agent_region_selections = np.zeros((self.K, M))
 

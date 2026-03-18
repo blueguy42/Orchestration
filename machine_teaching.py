@@ -50,6 +50,14 @@ RoundRobinTeacher  — Deterministic baseline: cycles through all (agent, region
 RandomTeacher      — Stochastic baseline: selects (agent, region) uniformly.
                      Uses an isolated RNG (no global numpy state pollution).
                      Lower bound on teaching efficiency.
+
+Randomness
+----------
+All teachers use isolated np.random.Generator instances seeded from the
+constructor seed argument.  No teacher calls np.random.seed() or uses the
+global numpy random state.  BaseTeacher._pred_rng drives agent predictions;
+SurrogateTeacher._select_rng handles tiebreaking; RandomTeacher._select_rng
+drives pair selection.  This ensures fully reproducible experiments.
 """
 
 import numpy as np
@@ -140,6 +148,13 @@ def _expected_mse_reduction(alpha1: float, alpha0: float,
     return current_se - expected_new_se
 
 
+def _get_alpha(ce) -> tuple:
+    """Return (alpha1, alpha0) from any estimator, defaulting to 1.0/1.0."""
+    a1 = getattr(ce, "alpha1", 1.0)
+    a0 = getattr(ce, "alpha0", 1.0)
+    return float(a1), float(a0)
+
+
 def _posterior_variance(alpha1: float, alpha0: float,
                         n_cor: int, n_inc: int) -> float:
     """
@@ -214,12 +229,20 @@ class BaseTeacher:
         return self.capability_estimator.get_all_posterior_means()
 
     def get_posterior_variance(self, agent_idx: int, region: int) -> float:
-        n_inc = int(self.capability_estimator.counts[agent_idx, region, 0])
-        n_cor = int(self.capability_estimator.counts[agent_idx, region, 1])
         ce = self.capability_estimator
-        if ce.prior is not None and hasattr(ce.prior, "posterior_variance"):
+        # If the estimator exposes its own get_posterior_variance, use it directly.
+        if hasattr(ce, "get_posterior_variance") and callable(
+            getattr(ce, "get_posterior_variance")
+        ):
+            return ce.get_posterior_variance(agent_idx, region)
+        # Fallback: compute from Beta parameters (original CapabilityEstimator path).
+        n_inc = int(ce.counts[agent_idx, region, 0])
+        n_cor = int(ce.counts[agent_idx, region, 1])
+        if hasattr(ce, "prior") and ce.prior is not None and hasattr(
+            ce.prior, "posterior_variance"
+        ):
             return ce.prior.posterior_variance(n_cor, n_inc)
-        return _posterior_variance(ce.alpha1, ce.alpha0, n_cor, n_inc)
+        return _posterior_variance(*_get_alpha(ce), n_cor, n_inc)
 
     def total_variance(self) -> float:
         return sum(
@@ -280,7 +303,7 @@ class OmniscientTeacher(BaseTeacher):
                 n_inc = int(ce.counts[k, m, 0])
                 theta_star = self.true_caps[k, m]
                 score = _expected_mse_reduction(
-                    ce.alpha1, ce.alpha0, n_cor, n_inc, theta_star
+                    _get_alpha(ce)[0], _get_alpha(ce)[1], n_cor, n_inc, theta_star
                 )
                 if score > best_score:
                     best_score = score
@@ -433,7 +456,7 @@ class ImitationTeacher(BaseTeacher):
                 n_inc = int(ce.counts[k, m, 0])
                 # Use v (Robbins-Monro estimate of θ*) in the EMSR formula.
                 score = _expected_mse_reduction(
-                    ce.alpha1, ce.alpha0, n_cor, n_inc, self.v[k, m]
+                    _get_alpha(ce)[0], _get_alpha(ce)[1], n_cor, n_inc, self.v[k, m]
                 )
                 if score > best_score:
                     best_score = score

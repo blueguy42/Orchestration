@@ -34,6 +34,7 @@ This framework implements a multi-agent orchestration system for efficiently rou
 orchestration_framework.py    # Core orchestrator classes (Agent, Task, Orchestrators)
 machine_teaching.py          # Machine teaching approach (Teachers and task pool)
 priors.py                    # Prior distributions for Bayesian estimation
+capability_estimators.py     # Alternative capability estimator models (Beta-Binomial, Truncated-Normal, Logistic-Normal)
 synthetic_experiments.py      # Synthetic task generation and evaluation utilities
 run_experiments.py           # Main script for comprehensive experiments
 ```
@@ -312,6 +313,12 @@ Machine teaching orchestrators (inspired by Liu et al. 2017 "Iterative Machine T
 - `compute_teaching_efficiency()`: Steps-to-target-MSE metric
 - `print_teaching_results()`: Console summary table
 
+### `capability_estimators.py`
+Alternative capability estimator models for Part 7 comparison:
+- **3 Estimator Types**: `BetaBinomialEstimator` (conjugate reference), `TruncatedNormalEstimator` (non-conjugate, exact quadrature posterior), `LogisticNormalEstimator` (non-conjugate, Laplace approximation)
+- All share the same interface: `update()`, `get_capability()` (MAP), `get_posterior_mean()`, `get_posterior_variance()`, `get_all_capabilities()`, `get_all_posterior_means()`, `inject_estimates()`
+- `ESTIMATOR_CLASSES`, `ESTIMATOR_COLORS`: registries for experiment loops and plotting
+
 ### `synthetic_experiments.py`
 Experiment utilities:
 - `SyntheticDataGenerator`: Generate task streams
@@ -329,6 +336,8 @@ Main comprehensive experiment script with 5 parts:
 - **Part 3** — Unified comparison: downstream orchestration accuracy and convergence curves for all baselines and teaching-guided methods on a shared absolute x-axis
 - **Part 4** — Prior sensitivity analysis (Uniform, Jeffreys, Expert) on the Varying scenario
 - **Part 5** — Budget vs downstream accuracy trade-off sweep (budget 10–300) for the Varying scenario
+- **Part 6** — Direct variance comparison: passive orchestration vs machine teaching (MSE bands + accuracy violin plots at budget checkpoints 50/100/200)
+- **Part 7** — Capability estimator distribution comparison: Beta-Binomial vs Truncated-Normal vs Logistic-Normal across all teachers
 - **100 independent runs** per configuration for robust statistical analysis
 - Generates all visualizations to `output/` and prints summary tables
 
@@ -362,6 +371,15 @@ All figures are saved to `output/`:
 
 **Part 5 — Budget vs Downstream Accuracy (Varying scenario)**
 - `5a_budget_vs_downstream_accuracy.png` — downstream accuracy as a function of teaching budget for each teacher (±1σ), with Oracle and Random reference lines
+
+**Part 6 — With vs Without Teacher Variance Comparison (Varying scenario)**
+- `6a_teaching_vs_passive_mse.png` — MSE curves: best passive baseline (PaperOrchestrator) vs each teacher (±1σ bands, shared x-axis)
+- `6b_accuracy_violin_checkpoints.png` — violin plots of final accuracy distribution across 100 runs at budget checkpoints 50, 100, and 200 steps
+
+**Part 7 — Distribution Comparison (Varying scenario)**
+- `7a_estimator_mse_curves.png` — MSE convergence curves for all teachers × all estimators (±1σ)
+- `7b_estimator_final_mse_heatmap.png` — final MSE heatmap (estimator × teacher)
+- `7c_estimator_downstream_accuracy.png` — downstream accuracy bar chart (estimator × teacher)
 
 Console output includes performance tables, appropriateness metrics, teaching efficiency, and prior-specific analysis.
 
@@ -397,6 +415,7 @@ Runs comprehensive analysis:
 - **5 baseline orchestrators**: Random, Greedy, UCB1, Paper, Oracle  
 - **5 machine teaching approaches**: Random, RoundRobin, Surrogate, Imitation, Omniscient
 - **3 prior distributions**: Uniform Beta(1,1), Jeffreys Beta(0.5,0.5), Expert Beta(3,1)
+- **3 capability estimator models**: Beta-Binomial, Truncated-Normal, Logistic-Normal
 - **100 independent runs** per configuration for robust statistical analysis
 - Generates visualizations in `output/` directory
 
@@ -413,6 +432,7 @@ Dependencies (`requirements.txt`):
 ```
 numpy>=1.21.0
 matplotlib>=3.4.0
+scipy>=1.7.0
 ```
 
 ## References
