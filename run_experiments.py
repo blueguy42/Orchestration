@@ -13,11 +13,21 @@ Runs five experimental parts and saves all figures to output/:
       Random) on capability estimation: MSE convergence curves, efficiency
       (steps to target MSE), AUC under MSE curve, and convergence speed.
 
+      NOTE: "Steps to target MSE" in plot_convergence_speed is computed on the
+      mean MSE curve.  The more robust per-run median crossing time is printed
+      separately in the console summary via compute_median_efficiency().
+
   Part 3 — Unified Comparison
       Uses capability estimates produced by each teacher to initialise a
       PaperOrchestrator and measures downstream task accuracy on the Varying
       scenario.  Also overlays baseline and teaching MSE curves on a shared
       absolute x-axis.
+
+      NOTE: baseline curves (passive orchestration) and teaching curves (active
+      evaluation) share the same x-axis but represent different evaluation
+      budgets — the baseline consumes N_TASKS passively streamed observations
+      while teaching consumes BUDGET targeted evaluations.  This is labelled
+      clearly on the figure.
 
   Part 4 — Prior Sensitivity
       Re-runs machine teaching with three Beta priors (Uniform, Jeffreys,
@@ -27,7 +37,7 @@ Runs five experimental parts and saves all figures to output/:
       Sweeps teaching budget from 10 to 300 evaluations and plots how
       downstream orchestration accuracy grows with budget for each teacher.
 
-  Part 6 — With vs Without Teacher Variance Comparison  [NEW]
+  Part 6 — With vs Without Teacher Variance Comparison
       Direct side-by-side variance comparison for the Varying scenario:
         6a) MSE curves on the same axes — best passive baseline (Paper
             orchestrator) vs. each teacher, ±1σ bands, shared x-axis.
@@ -44,6 +54,12 @@ Runs five experimental parts and saves all figures to output/:
         7b) Final-MSE heatmap (estimator × teacher).
         7c) Downstream accuracy bar chart (estimator × teacher).
 
+      NOTE (Part 7d): when different estimators are used inside the live
+      PaperOrchestrator, the estimator affects routing decisions which in turn
+      affects which agents are observed.  The resulting MSE curves are therefore
+      not independent experiments — the selection policy and the estimator are
+      coupled.  Interpret differences with this confound in mind.
+
 Implementation notes
 --------------------
 * All runs use isolated np.random.Generator instances; no global seeding.
@@ -57,6 +73,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from scipy import stats as scipy_stats
 
 # numpy 2.0 renamed trapz → trapezoid; support both.
 try:
@@ -413,10 +430,12 @@ def run_teaching_experiments() -> dict:
 
         for name in sc_data:
             d = sc_data[name]
-            d["mse_runs"]       = np.array(d["mse_runs"])          # (N_RUNS, BUDGET)
-            d["mse_curve"]      = d["mse_runs"].mean(axis=0).tolist()
-            d["final_mse"]      = float(np.mean(d["final_mse_runs"]))
+            d["mse_runs"]        = np.array(d["mse_runs"])          # (N_RUNS, BUDGET)
+            d["mse_curve"]       = d["mse_runs"].mean(axis=0).tolist()
+            d["final_mse"]       = float(np.mean(d["final_mse_runs"]))
             d["final_estimates"] = np.mean(d["final_est_runs"], axis=0)
+            # Keep per-run estimates for box-plot (Fig 2d)
+            d["final_est_runs"]  = np.array(d["final_est_runs"])    # (N_RUNS, K, M)
 
         all_results[sc_name] = sc_data
         avg_dict = {
@@ -428,7 +447,32 @@ def run_teaching_experiments() -> dict:
         }
         print_teaching_results(avg_dict, target_mse=TARGET_MSE)
 
+        # FIX: also report per-run median crossing times.
+        compute_median_efficiency(sc_data, sc_name)
+
     return all_results
+
+
+def compute_median_efficiency(sc_data: dict, scenario_name: str):
+    """
+    FIX: report median (and IQR) crossing time from per-run data.
+    This is more robust than the mean-curve crossing used by
+    compute_teaching_efficiency(), because the mean curve dips below threshold
+    later than the median run when there is high variance.
+    """
+    print(f"\n  Per-run median steps to MSE<{TARGET_MSE} [{scenario_name}]")
+    for name, d in sc_data.items():
+        runs = d["mse_runs"]   # (N_RUNS, BUDGET)
+        crossings = []
+        for row in runs:
+            idx = next((t for t, v in enumerate(row) if v <= TARGET_MSE), None)
+            crossings.append(idx if idx is not None else BUDGET)
+        arr = np.array(crossings)
+        q25, q50, q75 = np.percentile(arr, [25, 50, 75])
+        pct_reached = 100 * np.mean(arr < BUDGET)
+        print(f"    {TEACHER_LABELS.get(name, name):<25}  "
+              f"median={q50:.0f}  IQR=[{q25:.0f},{q75:.0f}]  "
+              f"reached={pct_reached:.0f}%")
 
 
 def plot_mse_curves(all_results: dict, output_path: str = None):
@@ -463,6 +507,10 @@ def plot_mse_curves(all_results: dict, output_path: str = None):
 
 
 def plot_efficiency_bars(all_results: dict, output_path: str = None):
+    """
+    Efficiency bar chart using mean-curve crossing (Fig 2b).
+    Per-run median crossing times are printed by compute_median_efficiency().
+    """
     scenarios     = list(all_results.keys())
     teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
     n_t = len(teacher_names)
@@ -483,8 +531,9 @@ def plot_efficiency_bars(all_results: dict, output_path: str = None):
     ax.axhline(BUDGET, color="grey", ls="--", lw=1, label="Budget limit")
     ax.set_xticks(x)
     ax.set_xticklabels(scenarios, fontsize=10)
-    ax.set_ylabel(f"Steps to MSE < {TARGET_MSE}")
-    ax.set_title("Teaching Efficiency — Steps to Target MSE",
+    ax.set_ylabel(f"Steps to mean-MSE < {TARGET_MSE}")
+    ax.set_title("Teaching Efficiency — Steps to Target MSE (mean curve)\n"
+                 "See console for per-run median ± IQR",
                  fontsize=13, fontweight="bold")
     ax.legend(fontsize=9)
     ax.set_ylim(0, BUDGET * 1.18)
@@ -520,6 +569,11 @@ def plot_final_mse_heatmap(all_results: dict, output_path: str = None):
 
 def plot_capability_estimates(all_results: dict, scenario: str = "Varying",
                                output_path: str = None):
+    """
+    FIX: upgraded to box-plots of per-run final capability estimates (N_RUNS
+    data points per teacher per slot), rather than a single averaged point.
+    The true capability is shown as a dashed horizontal line.
+    """
     results = all_results.get(scenario)
     if not results:
         return
@@ -527,15 +581,27 @@ def plot_capability_estimates(all_results: dict, scenario: str = "Varying",
     K, Ml         = true_caps.shape
     teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
     n_t           = len(teacher_names)
-    fig, axes     = plt.subplots(K, Ml, figsize=(4.5 * Ml, 3.5 * K))
+    cols          = [TEACHER_COLORS.get(n, "grey") for n in teacher_names]
+    lbls          = [TEACHER_LABELS.get(n, n) for n in teacher_names]
+
+    fig, axes = plt.subplots(K, Ml, figsize=(4.5 * Ml, 3.5 * K))
     for k in range(K):
         for m in range(Ml):
             ax    = axes[k, m]
             truth = true_caps[k, m]
-            ests  = [results[tn]["final_estimates"][k, m] for tn in teacher_names]
-            cols  = [TEACHER_COLORS.get(n, "grey") for n in teacher_names]
-            lbls  = [TEACHER_LABELS.get(n, n) for n in teacher_names]
-            ax.scatter(range(n_t), ests, color=cols, s=80, zorder=3)
+            # Each entry is (N_RUNS,) of per-run final estimates for this slot
+            data_per_teacher = [
+                results[tn]["final_est_runs"][:, k, m]
+                for tn in teacher_names
+            ]
+            bp = ax.boxplot(data_per_teacher, positions=range(n_t),
+                            widths=0.5, patch_artist=True,
+                            medianprops={"color": "black", "lw": 2},
+                            flierprops={"marker": ".", "markersize": 3,
+                                        "alpha": 0.4})
+            for patch, col in zip(bp["boxes"], cols):
+                patch.set_facecolor(col)
+                patch.set_alpha(0.55)
             ax.axhline(truth, color="black", ls="--", lw=1.5,
                        label=f"True={truth:.3f}")
             ax.set_xticks(range(n_t))
@@ -544,7 +610,8 @@ def plot_capability_estimates(all_results: dict, scenario: str = "Varying",
             ax.set_ylabel("P(correct)")
             ax.set_title(f"Agent {k+1} | Region {m}", fontsize=9)
             ax.legend(fontsize=7, loc="upper right")
-    fig.suptitle(f'Capability Estimates — "{scenario}" — {BUDGET} steps',
+    fig.suptitle(f'Capability Estimates — "{scenario}" — {BUDGET} steps\n'
+                 f'Box = 25th–75th pctile across {N_RUNS} runs',
                  fontsize=12, fontweight="bold")
     plt.tight_layout()
     if output_path:
@@ -553,6 +620,11 @@ def plot_capability_estimates(all_results: dict, scenario: str = "Varying",
 
 
 def plot_convergence_speed(all_results: dict, output_path: str = None):
+    """
+    Grouped bar chart of mean-curve crossing time at three thresholds (Fig 2e).
+    Note: mean-curve crossing can under-report variance; the per-run median
+    crossing is reported separately in the console by compute_median_efficiency().
+    """
     sc            = "Varying"
     results       = all_results.get(sc, {})
     teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
@@ -573,9 +645,11 @@ def plot_convergence_speed(all_results: dict, output_path: str = None):
     _bar_labels(ax, fmt="{:.0f}", fontsize=7.5)
     ax.set_xticks(x)
     ax.set_xticklabels([TEACHER_LABELS.get(n, n) for n in teacher_names], fontsize=10)
-    ax.set_ylabel("Steps until threshold")
+    ax.set_ylabel("Steps until threshold (mean curve)")
     ax.set_ylim(0, BUDGET * 1.18)
-    ax.set_title(f'Convergence Speed — "{sc}"', fontsize=13, fontweight="bold")
+    ax.set_title(f'Convergence Speed — "{sc}"\n'
+                 f'Based on mean MSE curve; see console for per-run medians',
+                 fontsize=13, fontweight="bold")
     ax.legend(fontsize=9)
     plt.tight_layout()
     if output_path:
@@ -584,6 +658,12 @@ def plot_convergence_speed(all_results: dict, output_path: str = None):
 
 
 def plot_mse_auc(all_results: dict, output_path: str = None):
+    """
+    FIX: AUC is now mean of per-run AUC values (not AUC of the mean curve).
+    AUC of the mean curve can differ from mean of per-run AUCs due to Jensen's
+    inequality; computing per-run AUC and averaging is the correct statistic.
+    Error bars show ±1σ across the N_RUNS per-run AUC values.
+    """
     scenarios     = list(all_results.keys())
     teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
     n_t = len(teacher_names)
@@ -591,18 +671,24 @@ def plot_mse_auc(all_results: dict, output_path: str = None):
     w   = 0.15
     fig, ax = plt.subplots(figsize=FIGSIZE)
     for i, name in enumerate(teacher_names):
-        aucs = [float(_trapz(all_results[sc][name]["mse_curve"]))
-                for sc in scenarios]
-        ax.bar(x + (i - n_t / 2 + 0.5) * w, aucs, w,
+        mean_aucs, std_aucs = [], []
+        for sc in scenarios:
+            # Per-run AUC for each of the N_RUNS runs
+            mse_runs = all_results[sc][name]["mse_runs"]   # (N_RUNS, BUDGET)
+            per_run_auc = np.array([float(_trapz(row)) for row in mse_runs])
+            mean_aucs.append(per_run_auc.mean())
+            std_aucs.append(per_run_auc.std())
+        ax.bar(x + (i - n_t / 2 + 0.5) * w, mean_aucs, w,
                label=TEACHER_LABELS.get(name, name),
                color=TEACHER_COLORS.get(name, "grey"), alpha=0.87,
-               edgecolor="white")
-    _bar_labels(ax, fmt="{:.1f}", fontsize=7.5)
+               edgecolor="white",
+               yerr=std_aucs, capsize=3, error_kw={"elinewidth": 1.2})
     ax.set_xticks(x)
     ax.set_xticklabels(scenarios, fontsize=10)
-    ax.set_ylabel("AUC (lower = faster)")
+    ax.set_ylabel("Mean AUC ± 1σ (lower = faster convergence)")
     ax.legend(fontsize=9)
-    ax.set_title("Area Under MSE Curve", fontsize=13, fontweight="bold")
+    ax.set_title("Area Under MSE Curve — mean of per-run AUC (±1σ)",
+                 fontsize=13, fontweight="bold")
     plt.tight_layout()
     if output_path:
         _save(fig, output_path)
@@ -614,13 +700,19 @@ def plot_mse_auc(all_results: dict, output_path: str = None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def evaluate_downstream_orchestration(n_tasks: int = 500):
-    """Per-run downstream eval for the Varying scenario."""
+    """
+    Per-run downstream eval for the Varying scenario.
+
+    FIX: each teacher now gets its own fresh pred_rng per run, so downstream
+    accuracy comparisons between teachers are not correlated by a shared
+    stateful RNG.
+    """
     print("\n" + "=" * 70)
     print(f"PART 3 — Downstream Orchestration ({N_RUNS} runs, Varying)")
     print("=" * 70)
     agents        = create_agents_varying(M)
     teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
-    dt_avg        = {t: 0.0 for t in teacher_names}
+    dt_runs       = {t: [] for t in teacher_names}
     baseline_defs = [
         (RandomOrchestrator, {},         "RandomOrchestrator"),
         (GreedyOrchestrator, {},         "GreedyOrchestrator"),
@@ -628,7 +720,7 @@ def evaluate_downstream_orchestration(n_tasks: int = 500):
         (PaperOrchestrator,  {},         "PaperOrchestrator"),
         (OracleOrchestrator, {},         "OracleOrchestrator"),
     ]
-    bl_avg = {k: 0.0 for _, _, k in baseline_defs}
+    bl_runs = {k: [] for _, _, k in baseline_defs}
 
     for run in range(N_RUNS):
         if run and run % 25 == 0:
@@ -640,18 +732,20 @@ def evaluate_downstream_orchestration(n_tasks: int = 500):
         gen   = SyntheticDataGenerator(M=M, seed=SEED + run + 1000)
         tasks = gen.generate_task_stream(n_tasks)
 
-        for tname in teacher_names:
+        # FIX: each teacher in this run gets its own isolated pred_rng.
+        for ti, tname in enumerate(teacher_names):
             est  = tr[tname]["final_estimates"]
             tc   = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
-            pred_rng = np.random.default_rng(SEED + run + 77777)
+            # Unique seed per (run, teacher_index) combination.
+            pred_rng = np.random.default_rng(SEED + run * 100 + ti + 77777)
             orch = PaperOrchestrator(agents, M,
-                                     rng=np.random.default_rng(SEED + run + 88888))
+                                     rng=np.random.default_rng(SEED + run * 100 + ti + 88888))
             orch.capability_estimator.inject_estimates(est, n_virtual=50)
             for t, task in enumerate(tc):
                 aidx = orch.select_agent(task, t)
                 pred = agents[aidx].predict(task, rng=pred_rng)
                 orch.update(aidx, task, pred)
-            dt_avg[tname] += orch.get_performance_stats()["overall_accuracy"]
+            dt_runs[tname].append(orch.get_performance_stats()["overall_accuracy"])
 
         for i, (cls, kwargs, key) in enumerate(baseline_defs):
             tc   = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
@@ -662,12 +756,10 @@ def evaluate_downstream_orchestration(n_tasks: int = 500):
                 aidx = orch.select_agent(task, t)
                 pred = agents[aidx].predict(task, rng=pred_rng)
                 orch.update(aidx, task, pred)
-            bl_avg[key] += orch.get_performance_stats()["overall_accuracy"]
+            bl_runs[key].append(orch.get_performance_stats()["overall_accuracy"])
 
-    for k in dt_avg:
-        dt_avg[k] /= N_RUNS
-    for k in bl_avg:
-        bl_avg[k] /= N_RUNS
+    dt_avg = {k: float(np.mean(v)) for k, v in dt_runs.items()}
+    bl_avg = {k: float(np.mean(v)) for k, v in bl_runs.items()}
 
     print(f"\n{'Method':<35} {'Accuracy':>8}")
     print("-" * 45)
@@ -675,6 +767,18 @@ def evaluate_downstream_orchestration(n_tasks: int = 500):
         print(f"  [Baseline] {BASELINE_LABELS[k]:<22} {v:.3f}")
     for k, v in dt_avg.items():
         print(f"  [Teaching] {TEACHER_LABELS[k]:<22} {v:.3f}")
+
+    # Statistical significance vs. Random baseline (paired Wilcoxon)
+    random_runs = np.array(dt_runs["RandomTeacher"])
+    print("\n  Wilcoxon signed-rank test vs RandomTeacher (teaching methods):")
+    for tname in teacher_names:
+        if tname == "RandomTeacher":
+            continue
+        arr = np.array(dt_runs[tname])
+        stat, pval = scipy_stats.wilcoxon(arr, random_runs)
+        print(f"    {TEACHER_LABELS[tname]:<25}  p={pval:.4f}"
+              f"{'  *' if pval < 0.05 else ''}")
+
     return bl_avg, dt_avg
 
 
@@ -727,6 +831,11 @@ def plot_convergence_mse_absolute(baseline_curves: dict, teaching_results: dict,
     Baselines run 0→N_TASKS; teaching runs 0→BUDGET.  The efficiency gap is
     visually apparent because teaching curves stop at step BUDGET.
 
+    NOTE: Baseline x-axis is passive observation count (streamed tasks);
+    teaching x-axis is active evaluation count (targeted observations).
+    These are not equivalent budgets — both are plotted on the same axis only
+    to allow visual comparison of convergence speed, not total cost.
+
     OracleOrchestrator is excluded (no capability MSE data).
     """
     scenarios  = list(SCENARIOS.keys())
@@ -768,18 +877,20 @@ def plot_convergence_mse_absolute(baseline_curves: dict, teaching_results: dict,
         ax.axvline(BUDGET, color="grey", ls="-.", lw=1, alpha=0.5,
                    label=f"Budget={BUDGET}")
         ax.set_title(sc, fontsize=11, fontweight="bold")
-        ax.set_xlabel("Evaluation Steps (absolute)")
+        ax.set_xlabel("Evaluation Steps (absolute)\n"
+                      "[solid=passive stream, dashed=active teaching]")
         ax.set_ylabel("Capability MSE")
         ax.legend(fontsize=5.5, ncol=2)
     style_legend = [
         Line2D([0], [0], color="black", lw=2, ls="-",
-               label="Baselines (over full task stream)"),
+               label="Baselines (passive, 0→N_TASKS)"),
         Line2D([0], [0], color="black", lw=2, ls="--",
-               label="Teaching (over evaluation budget)"),
+               label="Teaching (active, 0→BUDGET)"),
     ]
     fig.legend(handles=style_legend, fontsize=9, loc="lower center",
                ncol=2, bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("Convergence MSE — Absolute Axis (±1σ, 100 runs)",
+    fig.suptitle("Convergence MSE — Absolute Axis (±1σ, 100 runs)\n"
+                 "Caution: passive and active x-axes are different evaluation regimes",
                  fontsize=13, fontweight="bold", y=1.01)
     plt.tight_layout()
     if output_path:
@@ -884,12 +995,12 @@ def plot_prior_efficiency_bars(prior_results: dict, scenario_name: str = "Varyin
                label=PRIOR_LABELS.get(pn, pn),
                color=PRIOR_COLORS.get(pn, "grey"), alpha=0.85, edgecolor="white")
     _bar_labels(ax, fmt="{:.0f}", fontsize=7.5)
-    ax.axhline(BUDGET, color="grey", ls="--", lw=1, label="Budget limit")
+    ax.axhline(BUDGET, color="grey", ls="--", lw=1)
     ax.set_xticks(x)
     ax.set_xticklabels([TEACHER_LABELS.get(n, n) for n in teacher_names], fontsize=10)
     ax.set_ylabel(f"Steps to MSE < {TARGET_MSE}")
     ax.set_ylim(0, BUDGET * 1.18)
-    ax.set_title(f"Prior Sensitivity — Efficiency  |  {scenario_name}",
+    ax.set_title(f"Prior Sensitivity — Teaching Efficiency  |  {scenario_name}",
                  fontsize=13, fontweight="bold")
     ax.legend(fontsize=9)
     plt.tight_layout()
@@ -900,11 +1011,13 @@ def plot_prior_efficiency_bars(prior_results: dict, scenario_name: str = "Varyin
 
 def plot_prior_final_mse_heatmap(prior_results: dict, scenario_name: str = "Varying",
                                   output_path: str = None):
-    priors_list   = list(prior_results.keys())
     teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
-    data = np.array([[prior_results[p].get(tn, {}).get("final_mse", np.nan)
-                       for p in priors_list]
-                      for tn in teacher_names])
+    priors_list   = list(prior_results.keys())
+    data = np.array([
+        [prior_results[pn].get(tn, {}).get("final_mse", np.nan)
+         for pn in priors_list]
+        for tn in teacher_names
+    ])
     fig, ax = plt.subplots(figsize=(9, 5))
     im = ax.imshow(data, aspect="auto", cmap="YlOrRd")
     plt.colorbar(im, ax=ax, label="Final MSE")
@@ -935,6 +1048,10 @@ def run_budget_tradeoff(budget_values=None, n_downstream: int = 500) -> dict:
     For each teaching budget, run each teacher on Varying then evaluate
     downstream accuracy with PaperOrchestrator.
 
+    FIX: each teacher now gets its own pred_rng per (budget, run) combination,
+    so accuracy comparisons between teachers at the same budget are not
+    correlated by a shared stateful RNG.
+
     Returns {teacher_name: {"budgets": [...], "acc_mean": [...], "acc_std": [...]}}
     """
     if budget_values is None:
@@ -963,12 +1080,13 @@ def run_budget_tradeoff(budget_values=None, n_downstream: int = 500) -> dict:
             gen   = SyntheticDataGenerator(M=M, seed=SEED + run + 5000)
             tasks = gen.generate_task_stream(n_downstream)
 
-            for tname in teacher_names:
+            # FIX: unique pred_rng per (run, teacher_index, budget).
+            for ti, tname in enumerate(teacher_names):
                 est      = tr[tname]["final_estimates"]
                 tc       = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
-                pred_rng = np.random.default_rng(SEED + run + 66666)
+                pred_rng = np.random.default_rng(SEED + run * 10000 + ti * 1000 + b + 66666)
                 orch     = PaperOrchestrator(
-                    agents, M, rng=np.random.default_rng(SEED + run + 44444))
+                    agents, M, rng=np.random.default_rng(SEED + run * 10000 + ti * 1000 + b + 44444))
                 orch.capability_estimator.inject_estimates(est, n_virtual=50)
                 for t, task in enumerate(tc):
                     aidx = orch.select_agent(task, t)
@@ -1067,13 +1185,6 @@ def run_with_without_teacher_comparison(
 ) -> dict:
     """
     Collect per-run data needed for the with/without teacher variance plots.
-
-    Returns a dict with:
-      "baseline_mse"  : (N_RUNS, N_TASKS) — PaperOrchestrator MSE per task
-      "teacher_mse"   : {teacher_name: (N_RUNS, BUDGET)} — teacher MSE per step
-      "baseline_acc"  : (N_RUNS,) — PaperOrchestrator final accuracy per run
-      "teacher_acc"   : {teacher_name: {budget: [acc per run]}}  — downstream acc
-    All already collected; we just extract and re-package from existing data.
     """
     print(f"\n  Packaging with/without comparison data for '{scenario}'...")
 
@@ -1164,12 +1275,6 @@ def run_violin_data(
     """
     Collect final-accuracy distributions at each checkpoint budget for violin
     plots.  Runs N_RUNS independent teaching + evaluation cycles.
-
-    Returns {
-      "checkpoints": [...],
-      "baseline_accs": [acc_run_0, ..., acc_run_{N_RUNS-1}]  (budget-independent),
-      "teacher_accs":  {teacher_name: {budget: [acc_run_0, ...]}}
-    }
     """
     print(f"\n  Collecting violin data (checkpoints={checkpoint_budgets}) ...")
     agents        = SCENARIOS[scenario](M)
@@ -1203,12 +1308,12 @@ def run_violin_data(
                 agents=agents, M=M, budget=budget,
                 teacher_classes=TEACHER_CLASSES, seed=SEED + run,
             )
-            for tname in teacher_names:
-                est      = tr[tname]["final_estimates"]
-                tc2      = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
-                pred_rng2 = np.random.default_rng(SEED + run + budget * 100 + 20000)
+            for ti, tname in enumerate(teacher_names):
+                est       = tr[tname]["final_estimates"]
+                tc2       = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
+                pred_rng2 = np.random.default_rng(SEED + run * 10000 + ti * 1000 + budget + 20000)
                 orch2     = PaperOrchestrator(
-                    agents, M, rng=np.random.default_rng(SEED + run + budget * 100 + 30000))
+                    agents, M, rng=np.random.default_rng(SEED + run * 10000 + ti * 1000 + budget + 30000))
                 orch2.capability_estimator.inject_estimates(est, n_virtual=50)
                 for t, task in enumerate(tc2):
                     aidx = orch2.select_agent(task, t)
@@ -1229,10 +1334,6 @@ def run_violin_data(
 def plot_variance_violin(violin_data: dict, output_path: str = None):
     """
     Fig 6b — Violin plots of downstream accuracy across 100 runs.
-
-    One panel per teacher.  For each teacher panel, violins show the
-    distribution at each budget checkpoint; the passive baseline distribution
-    is overlaid as a horizontal band (mean ± std) for comparison.
     """
     teacher_names = [cls.__name__ for cls, _ in TEACHER_CLASSES]
     checkpoints   = violin_data["checkpoints"]
@@ -1328,7 +1429,6 @@ def _run_teaching_with_estimator(
         teacher = teacher_cls(agents=agents, M=M, task_pool=pool, **kw)
 
         # Replace the internal CapabilityEstimator with the chosen alternative.
-        # We need to also update alpha0/alpha1 on the teacher (used in EMSR).
         new_est = estimator_class(K=K, M=M, **estimator_kwargs)
         teacher.capability_estimator = new_est
         # For EMSR helpers that read alpha0/alpha1 off the estimator:
@@ -1344,6 +1444,9 @@ def _run_teaching_with_estimator(
             prediction = agents[agent_idx].predict(task, rng=teacher._pred_rng)
             is_correct = prediction == task.y
             new_est.update(agent_idx, region, is_correct)
+            # FIX: increment the dedicated real_obs counter so bootstrap works
+            # correctly even after estimator swap.
+            teacher._real_obs += 1
 
             # For ImitationTeacher: also update its internal v and slot count
             if hasattr(teacher, "_slot_obs_count"):
@@ -1370,6 +1473,13 @@ def _run_teaching_with_estimator(
 def run_distribution_comparison(scenario_name: str = "Varying") -> dict:
     """
     Run all teacher × estimator combinations across N_RUNS.
+
+    NOTE: estimator choice couples with the orchestration policy in Part 7d.
+    In the passive stream (7d), different estimators lead to different routing
+    decisions which produce different observations, so the MSE trajectories
+    are not directly comparable as isolated estimator benchmarks.
+    In the active teaching context (7a–7c), routing is controlled by the
+    teacher, so estimators are more fairly compared.
 
     Returns {estimator_name: {teacher_name: {"mse_runs": (N_RUNS, BUDGET),
                                               "mse_curve": [...],
@@ -1398,20 +1508,20 @@ def run_distribution_comparison(scenario_name: str = "Varying") -> dict:
                 est_cls, est_kwargs, seed=SEED + run,
             )
 
-            # Downstream eval
+            # Downstream eval — each teacher gets its own pred_rng.
             gen   = SyntheticDataGenerator(M=M, seed=SEED + run + 7000)
             tasks = gen.generate_task_stream(500)
 
-            for tname in teacher_names:
+            for ti, tname in enumerate(teacher_names):
                 mse_c = run_res[tname]["mse_curve"]
                 est_data[tname]["mse_runs"].append(mse_c)
 
-                # Downstream accuracy
+                # Downstream accuracy — unique pred_rng per (run, teacher).
                 est_vals = run_res[tname]["final_estimates"]
                 tc       = [Task(x=t.x.copy(), y=t.y, region=t.region) for t in tasks]
-                pred_rng = np.random.default_rng(SEED + run + 40000)
+                pred_rng = np.random.default_rng(SEED + run * 100 + ti + 40000)
                 orch     = PaperOrchestrator(
-                    agents, M, rng=np.random.default_rng(SEED + run + 50000))
+                    agents, M, rng=np.random.default_rng(SEED + run * 100 + ti + 50000))
                 orch.capability_estimator.inject_estimates(est_vals, n_virtual=50)
                 for t, task in enumerate(tc):
                     aidx = orch.select_agent(task, t)
@@ -1445,9 +1555,7 @@ def run_distribution_comparison(scenario_name: str = "Varying") -> dict:
 def plot_distribution_mse_curves(dist_results: dict,
                                   scenario_name: str = "Varying",
                                   output_path: str = None):
-    """
-    Fig 7a — MSE curves: one panel per teacher, three lines per estimator (±1σ).
-    """
+    """Fig 7a — MSE curves: one panel per teacher, three lines per estimator (±1σ)."""
     teacher_names  = [cls.__name__ for cls, _ in TEACHER_CLASSES]
     estimator_names = [n for _, _, n in ESTIMATOR_CLASSES]
 
@@ -1569,8 +1677,11 @@ def run_orchestrator_estimator_comparison(
     (Beta-Binomial, Truncated-Normal, Logistic-Normal) across N_RUNS seeds
     on scenario_name.
 
-    This directly answers: does the choice of θ_{k,m} estimator inside the
-    orchestrator change online accuracy and capability-learning speed?
+    NOTE: different estimators affect routing, which produces different
+    observations, which in turn affects how the estimators learn.  The MSE
+    trajectories are therefore not cleanly isolated estimator benchmarks —
+    the selection policy and the estimator are coupled.  Interpret comparisons
+    with this confound in mind.
 
     Returns:
         {estimator_name: {
@@ -1682,8 +1793,9 @@ def plot_orchestrator_estimator_accuracy(
     ax.set_ylim(0, 1.05)
     ax.set_title(
         f"Estimator Comparison in PaperOrchestrator — Accuracy\n"
-        f"Scenario: {scenario_name}",
-        fontsize=12, fontweight="bold",
+        f"Scenario: {scenario_name}\n"
+        f"Note: estimator and routing policy are coupled; see dissertation §7d",
+        fontsize=11, fontweight="bold",
     )
     plt.tight_layout()
     if output_path:
@@ -1701,6 +1813,9 @@ def plot_orchestrator_estimator_mse(
 
     Shows how fast each estimator drives capability estimates toward the true
     values when embedded inside a live PaperOrchestrator (passive stream).
+
+    NOTE: the estimator affects routing, so these curves reflect a coupled
+    system (estimator + policy), not the estimator in isolation.
     """
     fig, ax = plt.subplots(figsize=FIGSIZE)
 
@@ -1718,7 +1833,7 @@ def plot_orchestrator_estimator_mse(
     ax.set_ylabel("Capability MSE")
     ax.set_title(
         f"Estimator Comparison in PaperOrchestrator — MSE Convergence (±1σ)\n"
-        f"Scenario: {scenario_name}",
+        f"Scenario: {scenario_name}  |  Caution: estimator–policy coupling",
         fontsize=12, fontweight="bold",
     )
     ax.legend(fontsize=10)

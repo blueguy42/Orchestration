@@ -1,0 +1,461 @@
+======================================================================
+ Multi-Agent Orchestration — Unified Experiment Suite
+ M=3 | N=1000 | Budget=200 | seed=42 | runs=100
+======================================================================
+
+======================================================================
+PART 1 — Baseline Orchestrators (100 runs)
+======================================================================
+
+  Scenario: Approx. Invariant  (App=1.045)
+    run 25
+    run 50
+    run 75
+    RandomOrchestrator           0.332 ± 0.015
+    GreedyOrchestrator           0.332 ± 0.016
+    UCB1Orchestrator             0.334 ± 0.015
+    PaperOrchestrator            0.333 ± 0.015
+    OracleOrchestrator           0.350 ± 0.016
+
+  Scenario: Dominant  (App=2.380)
+    run 25
+    run 50
+    run 75
+    RandomOrchestrator           0.330 ± 0.015
+    GreedyOrchestrator           0.748 ± 0.083
+    UCB1Orchestrator             0.732 ± 0.014
+    PaperOrchestrator            0.755 ± 0.079
+    OracleOrchestrator           0.794 ± 0.012
+
+  Scenario: Dominant + Mis. Cost  (App=2.380)
+    run 25
+    run 50
+    run 75
+    RandomOrchestrator           0.330 ± 0.015
+    GreedyOrchestrator           0.748 ± 0.083
+    UCB1Orchestrator             0.732 ± 0.014
+    PaperOrchestrator            0.678 ± 0.124
+    OracleOrchestrator           0.794 ± 0.012
+
+  Scenario: Varying  (App=2.380)
+    run 25
+    run 50
+    run 75
+    RandomOrchestrator           0.331 ± 0.015
+    GreedyOrchestrator           0.712 ± 0.110
+    UCB1Orchestrator             0.732 ± 0.013
+    PaperOrchestrator            0.700 ± 0.117
+    OracleOrchestrator           0.794 ± 0.012
+
+Computing baseline curves...
+  Baseline curves: Approx. Invariant
+    RandomOrchestrator run 25
+    RandomOrchestrator run 50
+    RandomOrchestrator run 75
+    GreedyOrchestrator run 25
+    GreedyOrchestrator run 50
+    GreedyOrchestrator run 75
+    UCB1Orchestrator run 25
+    UCB1Orchestrator run 50
+    UCB1Orchestrator run 75
+    PaperOrchestrator run 25
+    PaperOrchestrator run 50
+    PaperOrchestrator run 75
+    OracleOrchestrator run 25
+    OracleOrchestrator run 50
+    OracleOrchestrator run 75
+  Baseline curves: Dominant
+    RandomOrchestrator run 25
+    RandomOrchestrator run 50
+    RandomOrchestrator run 75
+    GreedyOrchestrator run 25
+    GreedyOrchestrator run 50
+    GreedyOrchestrator run 75
+    UCB1Orchestrator run 25
+    UCB1Orchestrator run 50
+    UCB1Orchestrator run 75
+    PaperOrchestrator run 25
+    PaperOrchestrator run 50
+    PaperOrchestrator run 75
+    OracleOrchestrator run 25
+    OracleOrchestrator run 50
+    OracleOrchestrator run 75
+  Baseline curves: Dominant + Mis. Cost
+    RandomOrchestrator run 25
+    RandomOrchestrator run 50
+    RandomOrchestrator run 75
+    GreedyOrchestrator run 25
+    GreedyOrchestrator run 50
+    GreedyOrchestrator run 75
+    UCB1Orchestrator run 25
+    UCB1Orchestrator run 50
+    UCB1Orchestrator run 75
+    PaperOrchestrator run 25
+    PaperOrchestrator run 50
+    PaperOrchestrator run 75
+    OracleOrchestrator run 25
+    OracleOrchestrator run 50
+    OracleOrchestrator run 75
+  Baseline curves: Varying
+    RandomOrchestrator run 25
+    RandomOrchestrator run 50
+    RandomOrchestrator run 75
+    GreedyOrchestrator run 25
+    GreedyOrchestrator run 50
+    GreedyOrchestrator run 75
+    UCB1Orchestrator run 25
+    UCB1Orchestrator run 50
+    UCB1Orchestrator run 75
+    PaperOrchestrator run 25
+    PaperOrchestrator run 50
+    PaperOrchestrator run 75
+    OracleOrchestrator run 25
+    OracleOrchestrator run 50
+    OracleOrchestrator run 75
+
+Generating baseline figures...
+  Saved → output/1a_baseline_accuracy.png
+  Saved → output/1b_baseline_learning_curves.png
+  Saved → output/1c_baseline_capability_mse.png
+
+======================================================================
+PART 2 — Machine Teaching (100 runs)
+======================================================================
+
+  Scenario: Approx. Invariant
+    run 25
+    run 50
+    run 75
+
+======================================================================
+MACHINE TEACHING RESULTS
+======================================================================
+Teacher                      Final MSE     Steps to MSE<0.005
+-----------------------------------------------------------------
+OmniscientTeacher             0.002339                     44
+ImitationTeacher              0.021034            not reached
+SurrogateTeacher              0.014027            not reached
+RoundRobinTeacher             0.011036            not reached
+RandomTeacher                 0.012089            not reached
+
+Capability estimates (after budget) — OmniscientTeacher
+               Region 0  Region 1  Region 2
+  Agent_1 est  0.381  0.353  0.346
+  Agent_1 true 0.350  0.336  0.314
+  Agent_2 est  0.354  0.352  0.352
+  Agent_2 true 0.339  0.338  0.323
+  Agent_3 est  0.370  0.350  0.347
+  Agent_3 true 0.349  0.322  0.329
+  Agent_4 est  0.353  0.341  0.371
+  Agent_4 true 0.331  0.311  0.357
+
+
+  Per-run median steps to MSE<0.005 [Approx. Invariant]
+    Omniscient (EMSR)          median=31  IQR=[21,44]  reached=99%
+    Imitation                  median=200  IQR=[200,200]  reached=11%
+    Surrogate                  median=200  IQR=[200,200]  reached=9%
+    Round-Robin                median=200  IQR=[200,200]  reached=15%
+    Random                     median=200  IQR=[200,200]  reached=9%
+
+  Scenario: Dominant
+    run 25
+    run 50
+    run 75
+
+======================================================================
+MACHINE TEACHING RESULTS
+======================================================================
+Teacher                      Final MSE     Steps to MSE<0.005
+-----------------------------------------------------------------
+OmniscientTeacher             0.004419                    122
+ImitationTeacher              0.022826            not reached
+SurrogateTeacher              0.007215            not reached
+RoundRobinTeacher             0.008071            not reached
+RandomTeacher                 0.008635            not reached
+
+Capability estimates (after budget) — OmniscientTeacher
+               Region 0  Region 1  Region 2
+  Agent_1 est  0.615  0.763  0.808
+  Agent_1 true 0.650  0.852  0.877
+  Agent_2 est  0.391  0.348  0.353
+  Agent_2 true 0.399  0.298  0.303
+  Agent_3 est  0.136  0.132  0.119
+  Agent_3 true 0.079  0.076  0.069
+  Agent_4 est  0.055  0.156  0.344
+  Agent_4 true 0.031  0.091  0.274
+
+
+  Per-run median steps to MSE<0.005 [Dominant]
+    Omniscient (EMSR)          median=99  IQR=[70,200]  reached=71%
+    Imitation                  median=200  IQR=[200,200]  reached=2%
+    Surrogate                  median=200  IQR=[176,200]  reached=36%
+    Round-Robin                median=200  IQR=[198,200]  reached=26%
+    Random                     median=200  IQR=[190,200]  reached=31%
+
+  Scenario: Dominant + Mis. Cost
+    run 25
+    run 50
+    run 75
+
+======================================================================
+MACHINE TEACHING RESULTS
+======================================================================
+Teacher                      Final MSE     Steps to MSE<0.005
+-----------------------------------------------------------------
+OmniscientTeacher             0.004419                    122
+ImitationTeacher              0.022826            not reached
+SurrogateTeacher              0.007215            not reached
+RoundRobinTeacher             0.008071            not reached
+RandomTeacher                 0.008635            not reached
+
+Capability estimates (after budget) — OmniscientTeacher
+               Region 0  Region 1  Region 2
+  Agent_1 est  0.615  0.763  0.808
+  Agent_1 true 0.650  0.852  0.877
+  Agent_2 est  0.391  0.348  0.353
+  Agent_2 true 0.399  0.298  0.303
+  Agent_3 est  0.136  0.132  0.119
+  Agent_3 true 0.079  0.076  0.069
+  Agent_4 est  0.055  0.156  0.344
+  Agent_4 true 0.031  0.091  0.274
+
+
+  Per-run median steps to MSE<0.005 [Dominant + Mis. Cost]
+    Omniscient (EMSR)          median=99  IQR=[70,200]  reached=71%
+    Imitation                  median=200  IQR=[200,200]  reached=2%
+    Surrogate                  median=200  IQR=[176,200]  reached=36%
+    Round-Robin                median=200  IQR=[198,200]  reached=26%
+    Random                     median=200  IQR=[190,200]  reached=31%
+
+  Scenario: Varying
+    run 25
+    run 50
+    run 75
+
+======================================================================
+MACHINE TEACHING RESULTS
+======================================================================
+Teacher                      Final MSE     Steps to MSE<0.005
+-----------------------------------------------------------------
+OmniscientTeacher             0.004349                    113
+ImitationTeacher              0.024443            not reached
+SurrogateTeacher              0.006448            not reached
+RoundRobinTeacher             0.007851            not reached
+RandomTeacher                 0.008196            not reached
+
+Capability estimates (after budget) — OmniscientTeacher
+               Region 0  Region 1  Region 2
+  Agent_1 est  0.616  0.135  0.341
+  Agent_1 true 0.650  0.076  0.274
+  Agent_2 est  0.391  0.348  0.353
+  Agent_2 true 0.399  0.298  0.303
+  Agent_3 est  0.136  0.762  0.117
+  Agent_3 true 0.079  0.852  0.069
+  Agent_4 est  0.052  0.154  0.809
+  Agent_4 true 0.031  0.091  0.877
+
+
+  Per-run median steps to MSE<0.005 [Varying]
+    Omniscient (EMSR)          median=96  IQR=[71,183]  reached=75%
+    Imitation                  median=200  IQR=[200,200]  reached=0%
+    Surrogate                  median=200  IQR=[151,200]  reached=46%
+    Round-Robin                median=200  IQR=[183,200]  reached=35%
+    Random                     median=200  IQR=[168,200]  reached=34%
+
+Generating teaching figures...
+  Saved → output/2a_teaching_mse_curves.png
+  Saved → output/2b_teaching_efficiency.png
+  Saved → output/2c_teaching_mse_heatmap.png
+  Saved → output/2d_capability_estimates_varying.png
+  Saved → output/2e_teaching_convergence_speed.png
+  Saved → output/2f_teaching_mse_auc.png
+
+======================================================================
+PART 3 — Downstream Orchestration (100 runs, Varying)
+======================================================================
+  run 25
+  run 50
+  run 75
+
+Method                              Accuracy
+---------------------------------------------
+  [Baseline] Random                 0.333
+  [Baseline] Greedy                 0.705
+  [Baseline] UCB1                   0.700
+  [Baseline] Paper (Bhatt et al.)   0.692
+  [Baseline] Oracle                 0.795
+  [Teaching] Omniscient (EMSR)      0.789
+  [Teaching] Imitation              0.737
+  [Teaching] Surrogate              0.789
+  [Teaching] Round-Robin            0.778
+  [Teaching] Random                 0.783
+
+  Wilcoxon signed-rank test vs RandomTeacher (teaching methods):
+    Omniscient (EMSR)          p=0.0424  *
+    Imitation                  p=0.0000  *
+    Surrogate                  p=0.0828
+    Round-Robin                p=0.4200
+  Saved → output/3a_unified_accuracy_comparison.png
+  Saved → output/3b_convergence_mse_absolute.png
+
+======================================================================
+PART 4 — Prior Sensitivity (Varying, 100 runs)
+======================================================================
+
+  Prior: Beta(1,1) — Uniform (Dirichlet)
+    run 25
+    run 50
+    run 75
+
+  Prior: Jeffreys — Beta(0.5, 0.5)
+    run 25
+    run 50
+    run 75
+
+  Prior: Skewed Expert — Beta(3, 1)
+    run 25
+    run 50
+    run 75
+
+Generating prior figures...
+  Saved → output/4a_prior_mse_curves.png
+  Saved → output/4b_prior_efficiency_bars.png
+  Saved → output/4c_prior_final_mse_heatmap.png
+
+======================================================================
+PART 5 — Budget vs Downstream Accuracy (100 runs, Varying)
+======================================================================
+
+  Budget = 10
+    run 25
+    run 50
+    run 75
+
+  Budget = 25
+    run 25
+    run 50
+    run 75
+
+  Budget = 50
+    run 25
+    run 50
+    run 75
+
+  Budget = 75
+    run 25
+    run 50
+    run 75
+
+  Budget = 100
+    run 25
+    run 50
+    run 75
+
+  Budget = 150
+    run 25
+    run 50
+    run 75
+
+  Budget = 200
+    run 25
+    run 50
+    run 75
+
+  Budget = 300
+    run 25
+    run 50
+    run 75
+
+Teacher                    B= 10  B= 25  B= 50  B= 75  B=100  B=150  B=200  B=300
+---------------------------------------------------------------------------------
+Omniscient (EMSR)          0.695  0.775  0.788  0.788  0.788  0.791  0.787  0.788
+Imitation                  0.695  0.719  0.737  0.737  0.734  0.727  0.736  0.736
+Surrogate                  0.696  0.729  0.774  0.782  0.781  0.784  0.784  0.787
+Round-Robin                0.692  0.733  0.753  0.764  0.774  0.775  0.780  0.780
+Random                     0.707  0.719  0.748  0.761  0.769  0.781  0.780  0.783
+  Saved → output/5a_budget_vs_downstream_accuracy.png
+
+======================================================================
+PART 6 — With vs Without Teacher Variance Comparison
+======================================================================
+
+  Packaging with/without comparison data for 'Varying'...
+  Saved → output/6a_variance_comparison_curves.png
+
+Collecting violin data (this runs N_RUNS × checkpoints teaching jobs)...
+
+  Collecting violin data (checkpoints=(50, 100, 200)) ...
+    run 25
+    run 50
+    run 75
+  Saved → output/6b_variance_violin.png
+
+======================================================================
+PART 7 — Distribution Comparison (Varying, 100 runs)
+======================================================================
+
+  Estimator: Beta-Binomial
+    run 25
+    run 50
+    run 75
+
+  Estimator: Truncated-Normal
+    run 25
+    run 50
+    run 75
+
+  Estimator: Logistic-Normal
+    run 25
+    run 50
+    run 75
+
+Estimator              Teacher                    Final MSE   Downstream Acc
+----------------------------------------------------------------------------
+  Beta-Binomial        Omniscient (EMSR)            0.00435            0.788
+  Beta-Binomial        Imitation                    0.02444            0.738
+  Beta-Binomial        Surrogate                    0.00645            0.788
+  Beta-Binomial        Round-Robin                  0.00785            0.781
+  Beta-Binomial        Random                       0.00820            0.780
+  Truncated-Normal     Omniscient (EMSR)            0.01880            0.779
+  Truncated-Normal     Imitation                    0.03208            0.735
+  Truncated-Normal     Surrogate                    0.00889            0.788
+  Truncated-Normal     Round-Robin                  0.00987            0.780
+  Truncated-Normal     Random                       0.01025            0.781
+  Logistic-Normal      Omniscient (EMSR)            0.01929            0.784
+  Logistic-Normal      Imitation                    0.03153            0.739
+  Logistic-Normal      Surrogate                    0.01212            0.788
+  Logistic-Normal      Round-Robin                  0.01261            0.783
+  Logistic-Normal      Random                       0.01305            0.782
+
+Generating distribution comparison figures...
+  Saved → output/7a_distribution_mse_curves.png
+  Saved → output/7b_distribution_mse_heatmap.png
+  Saved → output/7c_distribution_downstream_accuracy.png
+
+======================================================================
+PART 7d — Estimator Comparison in Orchestrators (Varying, 100 runs)
+======================================================================
+
+  Estimator: Beta-Binomial
+    run 25
+    run 50
+    run 75
+    Accuracy: 0.696 ± 0.114
+
+  Estimator: Truncated-Normal
+    run 25
+    run 50
+    run 75
+    Accuracy: 0.771 ± 0.029
+
+  Estimator: Logistic-Normal
+    run 25
+    run 50
+    run 75
+    Accuracy: 0.771 ± 0.026
+  Saved → output/7d_orchestrator_estimator_accuracy.png
+  Saved → output/7e_orchestrator_estimator_mse.png
+
+======================================================================
+All experiments complete.  Figures in output/
+======================================================================

@@ -21,16 +21,21 @@ OmniscientTeacher  — Knows true capabilities θ*; selects the slot whose next
                      (EMSR criterion, closed-form for Beta-Binomial posterior mean).
                      Theoretical upper bound on teaching efficiency.
 
+                     NOTE: EMSR can be negative when the posterior mean already
+                     overshoots θ* (i.e. the estimator is biased above the true
+                     value). The teacher still picks the highest-scoring slot,
+                     so selection remains well-defined, but EMSR is not guaranteed
+                     to be a non-negative quantity in every step.
+
 SurrogateTeacher   — Does not know θ*; selects the slot with the highest
                      posterior variance (uncertainty sampling / A-optimal design).
                      Note: this is NOT identical to max query entropy
                      (H[Bernoulli(θ̂)]) — variance peaks at α₁=α₀ while query
                      entropy peaks at θ̂=0.5.  In practice the two are highly
                      correlated but the criterion used here is posterior variance.
-                     Also note: under the uniform Beta(1,1) prior all slots start
-                     with identical variance, so the surrogate teacher behaves like
-                     round-robin for the first K×M steps; a random tiebreak is
-                     applied to improve initial diversity.
+                     The surrogate teacher uses the same bootstrap as the omniscient
+                     teacher (visiting every slot once before applying its criterion)
+                     so that efficiency comparisons are fair.
 
 ImitationTeacher   — Bridges omniscient and surrogate.  Maintains a
                      Robbins-Monro running estimate v_{k,m} of θ*_{k,m} (by
@@ -130,6 +135,11 @@ def _expected_mse_reduction(alpha1: float, alpha0: float,
 
         E[Δ SE] = (θ* − θ̂)²
                   − [θ* (θ* − θ̂_correct)²  + (1−θ*)(θ* − θ̂_incorrect)²]
+
+    NOTE: this quantity can be negative when the posterior mean already
+    overshoots θ* (i.e. θ̂ > θ*) due to accumulated incorrect observations
+    from an unlucky run or a biased prior.  The teacher still selects the
+    slot with the maximum EMSR, so selection remains well-defined.
     """
     n = n_cor + n_inc
     s = alpha0 + alpha1 + n
@@ -201,6 +211,11 @@ class BaseTeacher:
         )
         self.history: List[TeachingStep] = []
 
+        # FIX: use a dedicated counter for bootstrap instead of summing counts[].
+        # Summing counts[] would give K*M*n_virtual if inject_estimates() had been
+        # called, incorrectly skipping the bootstrap phase.
+        self._real_obs: int = 0
+
     def select_pair(self, t: int) -> Tuple[int, int]:
         raise NotImplementedError
 
@@ -210,6 +225,7 @@ class BaseTeacher:
         prediction = self.agents[agent_idx].predict(task, rng=self._pred_rng)
         is_correct = prediction == task.y
         self.capability_estimator.update(agent_idx, region, is_correct)
+        self._real_obs += 1
         estimated = self.capability_estimator.get_all_posterior_means()
         mse = float(np.mean((estimated - self.true_caps) ** 2))
         record = TeachingStep(
@@ -283,14 +299,13 @@ class OmniscientTeacher(BaseTeacher):
     optimal criterion for MSE minimisation.
 
     Bootstrap: every (k, m) slot is visited once in row-major order before
-    EMSR-guided selection begins (total_obs < K*M phase).
+    EMSR-guided selection begins (_real_obs < K*M phase).
     """
 
     def select_pair(self, t: int) -> Tuple[int, int]:
-        # Bootstrap: visit every (k, m) at least once
-        total_obs = int(np.sum(self.capability_estimator.counts))
-        if total_obs < self.K * self.M:
-            slot = total_obs % (self.K * self.M)
+        # FIX: use _real_obs (dedicated counter) not np.sum(counts).
+        if self._real_obs < self.K * self.M:
+            slot = self._real_obs % (self.K * self.M)
             return slot // self.M, slot % self.M
 
         ce = self.capability_estimator
@@ -335,10 +350,12 @@ class SurrogateTeacher(BaseTeacher):
     design: we select the slot that maximises posterior uncertainty, which is
     the natural analogue when θ* is unknown.
 
-    Note on tiebreaking:
-    Under a uniform Beta(1,1) prior all K×M slots start with identical
-    variance.  A small random perturbation is added to break ties and avoid
-    deterministically always starting at (k=0, m=0).
+    Bootstrap (FIX):
+    Now uses the same _real_obs bootstrap as OmniscientTeacher / ImitationTeacher
+    so that all teachers are on a fair footing in efficiency comparisons.
+    After the bootstrap phase the max-variance criterion takes over; a small
+    random perturbation is added to break ties when multiple slots share
+    identical variance.
     """
 
     def __init__(self, *args, seed: int = 42, **kwargs):
@@ -347,14 +364,17 @@ class SurrogateTeacher(BaseTeacher):
         self._select_rng = np.random.default_rng(seed + 1337)
 
     def select_pair(self, t: int) -> Tuple[int, int]:
+        # FIX: add bootstrap phase matching OmniscientTeacher for fairness.
+        if self._real_obs < self.K * self.M:
+            slot = self._real_obs % (self.K * self.M)
+            return slot // self.M, slot % self.M
+
         ce = self.capability_estimator
         best_score = -np.inf
         best_k, best_m = 0, 0
 
         for k in range(self.K):
             for m in range(self.M):
-                n_cor = int(ce.counts[k, m, 1])
-                n_inc = int(ce.counts[k, m, 0])
                 # Add a tiny random tiebreak so equal-variance slots are not
                 # always resolved to (k=0, m=0).
                 score = (self.get_posterior_variance(k, m)
@@ -394,6 +414,10 @@ class ImitationTeacher(BaseTeacher):
     large numbers and provides the same conceptual role as the mirror-descent
     imitation in the original paper.
 
+    Update order: selection uses v from *before* the current observation;
+    v is updated *after* observing the outcome.  This is the correct online
+    order — the estimate available at selection time is v^{t-1}.
+
     Parameters
     ----------
     eta_v : float
@@ -418,8 +442,10 @@ class ImitationTeacher(BaseTeacher):
         is_correct = prediction == task.y
 
         self.capability_estimator.update(agent_idx, region, is_correct)
+        self._real_obs += 1
 
-        # Robbins-Monro update of v_{k,m} (after observation, before next select).
+        # Robbins-Monro update of v_{k,m} after observation, before next selection.
+        # The estimate used for the current selection was v before this update.
         self._slot_obs_count[agent_idx, region] += 1
         n_slot = self._slot_obs_count[agent_idx, region]
         eta_t = self.eta_base / (self.eta_base + n_slot)
@@ -440,10 +466,9 @@ class ImitationTeacher(BaseTeacher):
         return record
 
     def select_pair(self, t: int) -> Tuple[int, int]:
-        # Bootstrap: visit every (k, m) at least once
-        total_obs = int(np.sum(self.capability_estimator.counts))
-        if total_obs < self.K * self.M:
-            slot = total_obs % (self.K * self.M)
+        # FIX: use _real_obs (dedicated counter) not np.sum(counts).
+        if self._real_obs < self.K * self.M:
+            slot = self._real_obs % (self.K * self.M)
             return slot // self.M, slot % self.M
 
         ce = self.capability_estimator
@@ -533,6 +558,14 @@ def run_teaching_experiment(
 def compute_teaching_efficiency(
     results: Dict[str, Dict], target_mse: float
 ) -> Dict[str, Optional[int]]:
+    """
+    Returns the first step index at which the MSE curve dips at or below
+    target_mse for each teacher.  Returns None if never reached.
+
+    NOTE: this is computed on the mean MSE curve (or single-run curve as
+    supplied).  For a more robust metric, prefer computing per-run crossing
+    times and reporting the median; see run_experiments.py Part 2.
+    """
     efficiency = {}
     for name, summary in results.items():
         curve = summary["mse_curve"]
